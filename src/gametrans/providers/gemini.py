@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any, Dict, Iterator, List
 
 import httpx
@@ -21,6 +22,7 @@ import httpx
 from ..config import ProviderConfig
 from .base import (
     AuthError,
+    ModelNotFoundError,
     Provider,
     ProviderError,
     TranslationRequest,
@@ -61,6 +63,9 @@ class GeminiProvider(Provider):
         # of the string. Never send both: the API rejects that as an ambiguous
         # credential.
         self._auth_mode = "api-key"
+        # Guards the one-shot model switch below, so a genuinely bad model
+        # name cannot send us round in circles.
+        self._model_switched = False
 
     # -- request building ----------------------------------------------------
 
@@ -69,9 +74,9 @@ class GeminiProvider(Provider):
             "temperature": self.cfg.temperature,
             "maxOutputTokens": self.cfg.max_output_tokens,
             "responseMimeType": "text/plain",
-            # Disable reasoning tokens; a subtitle line needs none and they are
-            # the single largest source of latency on the 2.5 models.
-            "thinkingConfig": {"thinkingBudget": 0},
+            # Reasoning tokens are the single largest source of latency, and a
+            # one-line subtitle needs none.
+            "thinkingConfig": _thinking_config(self.cfg.model),
         }
         payload: Dict[str, Any] = {
             "systemInstruction": {"parts": [{"text": build_system_prompt(request)}]},
@@ -128,6 +133,26 @@ class GeminiProvider(Provider):
             raise ProviderError(f"{self.name}: {exc}") from exc
 
     def stream(self, request: TranslationRequest) -> Iterator[str]:
+        try:
+            for piece in self._stream_with_auth_retry(request):
+                yield piece
+        except ModelNotFoundError as exc:
+            # Google retires models and names the replacement in the error.
+            # Switching to it beats failing a translation the user is waiting on.
+            replacement = exc.suggested_model
+            if not replacement or replacement == self.cfg.model or self._model_switched:
+                raise
+            log.warning(
+                "%s: model %r is unavailable; switching to %r. "
+                "Set `model = \"%s\"` in config.toml to make this permanent.",
+                self.name, self.cfg.model, replacement, replacement,
+            )
+            self.cfg.model = replacement
+            self._model_switched = True
+            for piece in self._stream_with_auth_retry(request):
+                yield piece
+
+    def _stream_with_auth_retry(self, request: TranslationRequest) -> Iterator[str]:
         url = f"{self._base_url}/models/{self.cfg.model}:streamGenerateContent?alt=sse"
         payload = self._payload(request)
         modes = self._auth_modes()
@@ -194,6 +219,22 @@ class GeminiProvider(Provider):
 
     def close(self) -> None:
         self._client.close()
+
+
+_GEMINI_VERSION_RE = re.compile(r"gemini-(\d+)")
+
+
+def _thinking_config(model: str) -> Dict[str, Any]:
+    """The right way to ask for no reasoning, for this model generation.
+
+    Gemini 3.x replaced the numeric `thinkingBudget` with a `thinkingLevel`
+    enum, and sending both in one request is a 400 - so pick exactly one.
+    """
+    match = _GEMINI_VERSION_RE.search(model or "")
+    major = int(match.group(1)) if match else 0
+    if major >= 3:
+        return {"thinkingLevel": "minimal"}
+    return {"thinkingBudget": 0}
 
 
 def _extract_text(chunk: Dict[str, Any]) -> Iterator[str]:

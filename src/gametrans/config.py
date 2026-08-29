@@ -185,7 +185,7 @@ def default_provider_chain() -> List[ProviderConfig]:
         ProviderConfig(
             name="gemini-flash-lite",
             kind="gemini",
-            model="gemini-2.5-flash-lite",
+            model="gemini-3.5-flash-lite",
             api_key_env="GEMINI_API_KEY",
             rpm_limit=15,
             timeout_s=10.0,

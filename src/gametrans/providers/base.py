@@ -31,6 +31,18 @@ class AuthError(ProviderError):
     """Missing or rejected credentials - not worth retrying this session."""
 
 
+class ModelNotFoundError(ProviderError):
+    """The configured model does not exist, or is closed to new users.
+
+    `suggested_model` carries the replacement when the provider named one, which
+    lets the caller recover automatically rather than failing the translation.
+    """
+
+    def __init__(self, message: str, suggested_model: Optional[str] = None) -> None:
+        super().__init__(message)
+        self.suggested_model = suggested_model
+
+
 @dataclass
 class TranslationRequest:
     text: str
