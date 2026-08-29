@@ -34,7 +34,7 @@ echo     2  -  Check that everything is ready
 echo     3  -  Choose the subtitle area on screen
 echo     4  -  START TRANSLATING
 echo.
-echo     5  -  Test one translation (no game needed)
+echo     5  -  Test one translation (shows the real overlay)
 echo     6  -  Show which AI models are available
 echo     7  -  Update to the newest version
 echo     8  -  Open the settings file
@@ -117,7 +117,11 @@ set "sample="
 set /p "sample=  Type an English sentence (or just press Enter for a sample): "
 if "%sample%"=="" set "sample=You must reach the castle before nightfall, traveller."
 echo.
-python -m gametrans translate "%sample%"
+echo   The Persian will look reversed in this black window - that is a
+echo   limitation of the console, not the translation. A preview window
+echo   will open showing how it really looks in game.
+echo.
+python -m gametrans translate --preview "%sample%"
 echo.
 pause
 goto menu

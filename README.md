@@ -165,7 +165,7 @@ gametrans run            # شروع
 </div>
 
 ```powershell
-gametrans translate "You must reach the castle"   # تست ترجمه بدون بازی
+gametrans translate --preview "You must reach the castle"   # تست ترجمه با پنجره‌ی پیش‌نمایش
 gametrans setkey gemini                           # ثبت کلید در فایل .env
 gametrans models                                  # لیست زنده‌ی مدل‌های هر سرویس
 gametrans bench                                   # اندازه‌گیری تاخیر هر مرحله
@@ -298,6 +298,7 @@ target_fps      = 20
 | کلید را گذاشتم ولی دیده نمی‌شود | `gametrans check` منبع کلید را نشان می‌دهد؛ فایل باید `.env` باشد نه `.env.txt` |
 | کلیدهای میان‌بر کار نمی‌کنند | اگر بازی با دسترسی مدیر اجرا می‌شود، برنامه را هم Run as administrator کنید |
 | فارسی بریده‌بریده است | یعنی فونت لود نشده — پوشه‌ی `assets/fonts` باید کنار پروژه باشد |
+| در پنجره‌ی مشکی فارسی برعکس است | طبیعی است؛ cmd متن راست‌به‌چپ را پشتیبانی نمی‌کند. اورلی درست است — با `--preview` ببینید |
 | مصرف CPU زیاد | `target_fps` را ۸ کنید |
 
 ## توسعه

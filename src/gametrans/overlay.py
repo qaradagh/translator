@@ -56,10 +56,14 @@ class SubtitleOverlay(QWidget):
         cfg: OverlayConfig,
         region: RegionConfig,
         parent: Optional[QWidget] = None,
+        click_through: bool = True,
     ) -> None:
         super().__init__(parent)
         self.cfg = cfg
         self.region = region
+        # In-game the window must never swallow a click. A preview window wants
+        # the opposite, so it can be dismissed.
+        self.click_through = click_through
 
         self._translation = ""
         self._source = ""
@@ -67,16 +71,13 @@ class SubtitleOverlay(QWidget):
         self._status = ""
         self._latency_note = ""
 
-        self.setWindowFlags(
-            Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint
-            | Qt.Tool
-            | Qt.WindowTransparentForInput
-            | Qt.WindowDoesNotAcceptFocus
-        )
+        flags = Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+        if click_through:
+            flags |= Qt.WindowTransparentForInput | Qt.WindowDoesNotAcceptFocus
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
-        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_ShowWithoutActivating, click_through)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, click_through)
         # The whole window is right-to-left; child widgets inherit it.
         self.setLayoutDirection(Qt.RightToLeft)
 
@@ -450,3 +451,54 @@ def create_application() -> QApplication:
     app.setApplicationName("gametrans")
     app.setLayoutDirection(Qt.RightToLeft)
     return app
+
+
+def show_preview(text: str, source: str, cfg: OverlayConfig, seconds: float = 8.0) -> None:
+    """Show one translation in the real overlay, centred on screen.
+
+    A Windows console prints right-to-left text in logical order, so Persian
+    comes out reversed and unshaped there - which looks like a broken
+    translation when it is only a broken terminal. Rendering the same string
+    through the overlay shows what the player will actually see.
+    """
+    app = create_application()
+    load_bundled_fonts_from_default_locations()
+
+    screen = QApplication.primaryScreen()
+    width = 900
+    preview_cfg = OverlayConfig(**{**vars(cfg), "anchor": "custom", "width": width})
+    preview_cfg.linger_ms = 0  # the timer below owns the lifetime
+
+    window = SubtitleOverlay(preview_cfg, RegionConfig(), click_through=False)
+    window.resize(width, window._preferred_height())
+
+    if screen is not None:
+        geometry = screen.geometry()
+        window.move(
+            geometry.center().x() - width // 2,
+            int(geometry.height() * 0.62),
+        )
+
+    window.show_translation(text, source, partial=False)
+    window.show()
+    window.raise_()
+    window.activateWindow()
+
+    QTimer.singleShot(int(seconds * 1000), app.quit)
+    app.exec()
+
+
+def load_bundled_fonts_from_default_locations() -> List[str]:
+    """Load the bundled fonts without importing the app module (avoids a cycle)."""
+    import os
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    for candidate in (
+        os.environ.get("GAMETRANS_FONT_DIR", ""),
+        os.path.join(here, "assets", "fonts"),
+        os.path.normpath(os.path.join(here, "..", "..", "assets", "fonts")),
+        os.path.join(os.getcwd(), "assets", "fonts"),
+    ):
+        if candidate and os.path.isdir(candidate):
+            return load_bundled_fonts(candidate)
+    return []
