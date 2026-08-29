@@ -88,6 +88,12 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument(
         "--timeout", type=float, default=90.0, help="seconds per line before giving up"
     )
+    compare.add_argument(
+        "--label",
+        default="",
+        help="name this run, e.g. 'standard Ollama' or 'Intel GPU', so two "
+        "reports can be told apart",
+    )
 
     return parser
 
@@ -639,7 +645,9 @@ def _cmd_compare_models(cfg: AppConfig, args) -> int:
 
     print(format_console_report(results))
 
-    report = write_html_report(results, Path(args.report))
+    report = write_html_report(
+        results, Path(args.report), label=args.label, endpoint=args.base_url
+    )
     print(f"\nReport: {report.resolve()}")
     try:
         webbrowser.open(report.resolve().as_uri())
