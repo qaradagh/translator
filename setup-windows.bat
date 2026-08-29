@@ -30,13 +30,23 @@ if not exist "config.toml" (
     echo Created config.toml
 )
 
+if not exist ".env" (
+    copy /y .env.example .env >nul
+    echo Created .env
+)
+
 echo.
 echo ============================================================
 echo  Setup complete.
 echo.
-echo  Next, set a free API key ^(then reopen this window^):
-echo      setx GEMINI_API_KEY "your-key"
+echo  Next, add a free API key. Easiest way:
+echo      gametrans setkey gemini
+echo.
+echo  Get the key here first:
 echo      https://aistudio.google.com/apikey
+echo.
+echo  ^(Or open the .env file in this folder and paste it after
+echo   GEMINI_API_KEY= yourself.^)
 echo.
 echo  Then run:
 echo      run.bat

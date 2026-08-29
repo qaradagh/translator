@@ -275,8 +275,13 @@ def load_config(path: Optional[str] = None) -> AppConfig:
     """Load config from `path`, or the first default name found in the cwd.
 
     A missing file is not an error - defaults plus environment variables are
-    enough to run.
+    enough to run. A `.env` sitting beside the config is loaded first so API
+    keys can live in one editable file rather than the shell environment.
     """
+    from .dotenv import load_dotenv
+
+    load_dotenv(path)
+
     cfg = AppConfig()
 
     resolved: Optional[Path] = None

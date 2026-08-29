@@ -51,6 +51,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("check", help="verify OCR engines, providers and keys")
     sub.add_parser("models", help="list the models each configured provider offers")
 
+    setkey = sub.add_parser("setkey", help="store an API key in the .env file")
+    setkey.add_argument(
+        "provider",
+        nargs="?",
+        choices=["gemini", "groq", "anthropic"],
+        help="which key to set; omit to be asked",
+    )
+
     translate = sub.add_parser("translate", help="translate one string (no screen capture)")
     translate.add_argument("text", nargs="+", help="text to translate")
 
@@ -82,6 +90,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "monitors": lambda: _cmd_monitors(),
         "check": lambda: _cmd_check(cfg),
         "models": lambda: _cmd_models(cfg),
+        "setkey": lambda: _cmd_setkey(args),
         "translate": lambda: _cmd_translate(cfg, args),
         "bench": lambda: _cmd_bench(cfg, args),
     }
@@ -171,13 +180,19 @@ def _cmd_check(cfg: AppConfig) -> int:
         ok = False
         print("  -> install one: pip install \"gametrans[windows]\" (or [rapidocr])")
 
+    from .dotenv import env_file_path, source_of
+
     print("\nTranslation providers")
+    env_file = env_file_path()
+    if env_file.is_file():
+        print(f"  keys file: {env_file}")
     found_provider = False
     for entry in cfg.translate.providers:
         status = "disabled" if not entry.enabled else ""
         key_state = "no key needed"
         if entry.api_key_env:
-            key_state = "key set" if os.environ.get(entry.api_key_env) else \
+            origin = source_of(entry.api_key_env)
+            key_state = f"key set (from {origin})" if origin else \
                 f"MISSING ${entry.api_key_env}"
         mark = "ok" if (entry.enabled and "MISSING" not in key_state) else "--"
         if mark == "ok":
@@ -187,6 +202,8 @@ def _cmd_check(cfg: AppConfig) -> int:
         ok = False
         print("  -> get a free key: https://aistudio.google.com/apikey "
               "or https://console.groq.com/keys")
+        print(f"  -> then put it in {env_file_path()} as:")
+        print("       GEMINI_API_KEY=your-key-here")
 
     print("\nRegion")
     if cfg.region.is_set:
@@ -207,6 +224,64 @@ def _cmd_check(cfg: AppConfig) -> int:
 
     print("\n" + ("All required components are ready." if ok else "Fix the [--] items above."))
     return 0 if ok else 1
+
+
+_KEY_ENV_VARS = {
+    "gemini": ("GEMINI_API_KEY", "https://aistudio.google.com/apikey", "AIza"),
+    "groq": ("GROQ_API_KEY", "https://console.groq.com/keys", "gsk_"),
+    "anthropic": ("ANTHROPIC_API_KEY", "https://console.anthropic.com/settings/keys", "sk-ant-"),
+}
+
+
+def _cmd_setkey(args) -> int:
+    """Store an API key in `.env`.
+
+    The key is read from a prompt rather than a command-line argument so it does
+    not end up in shell history.
+    """
+    import getpass
+
+    from .dotenv import set_key
+
+    provider = getattr(args, "provider", None)
+    if not provider:
+        print("Which key do you want to set?")
+        for index, name in enumerate(_KEY_ENV_VARS, start=1):
+            print(f"  {index}) {name}")
+        choice = input("Number: ").strip()
+        names = list(_KEY_ENV_VARS)
+        if choice.isdigit() and 1 <= int(choice) <= len(names):
+            provider = names[int(choice) - 1]
+        elif choice.lower() in _KEY_ENV_VARS:
+            provider = choice.lower()
+        else:
+            print("error: unrecognised choice", file=sys.stderr)
+            return 2
+
+    env_var, signup_url, prefix = _KEY_ENV_VARS[provider]
+    print(f"\nGet a key at: {signup_url}")
+    print(f"It starts with '{prefix}'. Nothing is echoed as you paste.\n")
+
+    try:
+        value = getpass.getpass(f"{env_var}: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\ncancelled")
+        return 1
+
+    if not value:
+        print("error: no key entered", file=sys.stderr)
+        return 1
+
+    if not value.startswith(prefix):
+        print(
+            f"warning: a {provider} key usually starts with '{prefix}' - "
+            "double-check you pasted the whole thing."
+        )
+
+    path = set_key(env_var, value, getattr(args, "config", None))
+    print(f"\nSaved {env_var} to {path}")
+    print("Verify it with:  gametrans translate \"Hello traveller\"")
+    return 0
 
 
 def _cmd_models(cfg: AppConfig) -> int:
