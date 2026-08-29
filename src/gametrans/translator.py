@@ -171,6 +171,7 @@ class Translator:
             outcome.attempts.append(provider.name)
             provider.limiter.record()
 
+            request.compact_prompt = provider.cfg.compact_prompt
             try:
                 text_out, first_token_ms = self._stream_one(
                     provider, request, on_chunk, is_cancelled

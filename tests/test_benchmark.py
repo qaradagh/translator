@@ -224,3 +224,30 @@ def test_a_failing_warmup_does_not_hide_the_real_error(endpoint):
     result = benchmark_model("broken-model", endpoint, lines=SAMPLE_LINES[:1])
     assert result.ok is False
     assert result.error
+
+
+def test_report_identifies_which_run_it_is(tmp_path):
+    """Comparing two runtimes means two runs on the same address; the reports
+    must be tellable apart."""
+    results = [ModelResult(model="m", translations=["سلام"],
+                           first_token_ms=[10.0], total_ms=[20.0])]
+    path = write_html_report(
+        results,
+        tmp_path / "r.html",
+        lines=["Hello"],
+        label="Intel GPU",
+        endpoint="http://127.0.0.1:11434",
+    )
+    body = path.read_text(encoding="utf-8")
+    assert "Intel GPU" in body
+    assert "127.0.0.1:11434" in body
+
+
+def test_report_without_a_label_still_carries_a_timestamp(tmp_path):
+    import datetime
+
+    results = [ModelResult(model="m", translations=["سلام"],
+                           first_token_ms=[10.0], total_ms=[20.0])]
+    path = write_html_report(results, tmp_path / "r.html", lines=["Hello"])
+    body = path.read_text(encoding="utf-8")
+    assert datetime.datetime.now().strftime("%Y-%m-%d") in body

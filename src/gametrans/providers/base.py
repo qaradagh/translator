@@ -50,6 +50,9 @@ class TranslationRequest:
     source_language: str = "auto"
     context_hint: str = ""
     glossary: Dict[str, str] = field(default_factory=dict)
+    # Local models pay for every prompt token on every request; see
+    # build_compact_system_prompt.
+    compact_prompt: bool = False
 
 
 # -- prompt -----------------------------------------------------------------
@@ -74,6 +77,39 @@ Persian specifics:
 - Keep Latin proper nouns in Latin script when that is how players write them."""
 
 
+_COMPACT_RULES = """Translate video game text into {target}.
+Output only the translation: no notes, no quotes, no explanations.
+Keep line breaks, numbers and key names exactly as they are.
+Write natural spoken {target}, not formal or literary."""
+
+_COMPACT_PERSIAN = """Use ک and ی, never ك and ي. Use ، and ؟."""
+
+
+def build_compact_system_prompt(request: TranslationRequest) -> str:
+    """A much shorter prompt, for models running on the user's own hardware.
+
+    A local model re-reads the system prompt on every request, and prefill is
+    real wall-clock time on a consumer GPU - the full prompt is around 260
+    tokens against roughly 45 here. Large hosted models need the detailed rules
+    to behave; a small local one mostly needs to be told the job and left alone,
+    and a shorter prompt leaves more of its attention on the actual line.
+    """
+    parts = [_COMPACT_RULES.format(target=request.target_language)]
+
+    target_lower = request.target_language.lower()
+    if "persian" in target_lower or "farsi" in target_lower or target_lower == "fa":
+        parts.append(_COMPACT_PERSIAN)
+
+    if request.context_hint:
+        parts.append(request.context_hint)
+
+    if request.glossary:
+        pairs = "; ".join(f"{src} = {dst}" for src, dst in sorted(request.glossary.items()))
+        parts.append(f"Always: {pairs}")
+
+    return "\n".join(parts)
+
+
 def build_system_prompt(request: TranslationRequest) -> str:
     """Assemble the system prompt.
 
@@ -81,6 +117,9 @@ def build_system_prompt(request: TranslationRequest) -> str:
     prompt caching reuse the prefix, and keeping it short keeps the
     time-to-first-token down.
     """
+    if request.compact_prompt:
+        return build_compact_system_prompt(request)
+
     parts = [_BASE_RULES]
 
     target_lower = request.target_language.lower()
@@ -207,7 +246,11 @@ def build_provider(cfg: ProviderConfig) -> Provider:
         from .gemini import GeminiProvider
 
         return GeminiProvider(cfg)
-    if kind in {"openai", "openai_compat", "groq", "cerebras", "openrouter", "ollama"}:
+    if kind == "ollama":
+        from .ollama import OllamaProvider
+
+        return OllamaProvider(cfg)
+    if kind in {"openai", "openai_compat", "groq", "cerebras", "openrouter", "lmstudio"}:
         from .openai_compat import OpenAICompatProvider
 
         return OpenAICompatProvider(cfg)

@@ -177,8 +177,17 @@ def write_html_report(
     results: Sequence[ModelResult],
     path: Path,
     lines: Sequence[str] = SAMPLE_LINES,
+    label: str = "",
+    endpoint: str = "",
 ) -> Path:
-    """Write a side-by-side report that renders Persian properly."""
+    """Write a side-by-side report that renders Persian properly.
+
+    The label and endpoint are stamped into the page because comparing two
+    setups - a CPU runtime against a GPU-accelerated one, say - means two runs
+    on the same address, and two reports that would otherwise be
+    indistinguishable.
+    """
+    import datetime
     rows = []
     for index, source in enumerate(lines):
         cells = []
@@ -201,6 +210,13 @@ def write_html_report(
         for r in results
     )
 
+    stamp_parts = [datetime.datetime.now().strftime("%Y-%m-%d %H:%M")]
+    if label:
+        stamp_parts.insert(0, label)
+    if endpoint:
+        stamp_parts.append(endpoint)
+    stamp = html.escape("  ·  ".join(stamp_parts))
+
     document = f"""<!doctype html>
 <html lang="fa">
 <head>
@@ -221,10 +237,12 @@ def write_html_report(
          font-family: Vazirmatn, Segoe UI, Tahoma, sans-serif;
          font-size: 17px; line-height: 1.9; }}
   .bad {{ color: #ff8a8a; }}
+  .meta {{ color: #7f8b9c; font-size: 13px; margin-top: -6px; }}
 </style>
 </head>
 <body>
 <h1>Which model translates your game best?</h1>
+<p class="meta">{stamp}</p>
 <p class="note">
   Same lines through every model, on this machine. The numbers are speed;
   the columns are quality, which only you can judge. A model that reads

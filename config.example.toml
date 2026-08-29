@@ -129,16 +129,30 @@ extra       = { reasoning_effort = "none" }
 # نام مدل‌ها گاهی منسوخ می‌شوند — با `gametrans models` لیست زنده را ببینید.
 
 # ۳) مدل لوکال — کاملاً آفلاین و بدون سقف. برای فعال کردن enabled = true
+# aya-expanse:8b در اندازه‌گیری روی دیالوگ بازی بهترین فارسیِ مدل‌های ۸B بود.
+# با `gametrans compare-models` (منوی ۷) روی سخت‌افزار خودتان بسنجید.
 [[translate.providers]]
-name        = "ollama-local"
-kind        = "openai"
-model       = "qwen3:8b"
-base_url    = "http://127.0.0.1:11434/v1"
-rpm_limit   = 0
-timeout_s   = 20.0
-enabled     = false
-# مدل‌های استدلالی روی Ollama را با این پارامتر ساکت کنید:
-# extra = { reasoning_effort = "none" }
+name           = "ollama-local"
+kind           = "ollama"
+model          = "aya-expanse:8b"
+base_url       = "http://127.0.0.1:11434"
+rpm_limit      = 0
+timeout_s      = 60.0
+enabled        = false
+# پرامپت کوتاه‌تر. مدل لوکال آن را در هر درخواست دوباره می‌خواند و روی CPU
+# این وقت واقعی است.
+compact_prompt = true
+
+# keep_alive نمی‌گذارد مدل وسط بازی از حافظه خارج شود.
+# num_ctx کوچک‌تر = حافظه‌ی کمتر برای هر توکن = سریع‌تر روی CPU.
+# num_thread را برابر تعداد هسته‌های اصلی بگذارید (روی Core Ultra 9 حدود ۶).
+[translate.providers.extra]
+keep_alive = "30m"
+
+[translate.providers.extra.options]
+num_ctx     = 2048
+num_predict = 256
+# num_thread = 6
 
 # ۴) Claude — بهترین کیفیت فارسی در کل، ولی پولی. برای فعال کردن enabled = true
 # [[translate.providers]]

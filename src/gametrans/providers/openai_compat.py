@@ -57,12 +57,10 @@ class OpenAICompatProvider(Provider):
             limits=httpx.Limits(max_keepalive_connections=4, max_connections=8),
             headers=headers,
         )
-        # Cleared for the session once a server rejects the extra fields.
-        self._send_extras = True
+        # Extra fields this server has rejected; never sent again this session.
+        self._blocked_extras: set = set()
 
-    def _payload(
-        self, request: TranslationRequest, with_extras: bool = True
-    ) -> Dict[str, Any]:
+    def _payload(self, request: TranslationRequest) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "model": self.cfg.model,
             "messages": [
@@ -73,8 +71,7 @@ class OpenAICompatProvider(Provider):
             "max_tokens": self.cfg.max_output_tokens,
             "stream": True,
         }
-        if self.cfg.extra and with_extras and self._send_extras:
-            payload.update(self.cfg.extra)
+        payload.update(self._live_extras())
         return payload
 
     def stream(self, request: TranslationRequest) -> Iterator[str]:
@@ -83,31 +80,44 @@ class OpenAICompatProvider(Provider):
         # Provider-specific fields such as `reasoning_effort` are accepted by
         # some servers and rejected outright by others, and which is which
         # changes between versions. Rather than maintain a compatibility table,
-        # send them and drop them permanently if the server objects.
-        attempts = [True, False] if (self.cfg.extra and self._send_extras) else [False]
-
-        for index, with_extras in enumerate(attempts):
+        # send them and drop what the server objects to. Dropping only the named
+        # field matters: the others may be doing real work - `keep_alive` stops
+        # a local model unloading mid-game, which costs a ten second reload on
+        # the next line.
+        for attempt in range(3):
             produced = False
             try:
-                for piece in self._stream_once(url, request, with_extras):
+                for piece in self._stream_once(url, request):
                     produced = True
                     yield piece
             except ProviderError as exc:
-                is_last = index == len(attempts) - 1
-                if produced or is_last or not _is_bad_request(exc):
+                if produced or not _is_bad_request(exc) or not self._blocked_extras_shrinkable():
                     raise
-                log.info(
-                    "%s rejected the extra request fields (%s); retrying without them",
-                    self.name, str(exc)[:120],
-                )
-                self._send_extras = False
+                rejected = _rejected_fields(str(exc), self._live_extras())
+                if rejected:
+                    log.info("%s rejected %s; retrying without it",
+                             self.name, ", ".join(sorted(rejected)))
+                    self._blocked_extras |= rejected
+                else:
+                    log.info("%s rejected the extra request fields; retrying without them",
+                             self.name)
+                    self._blocked_extras |= set(self.cfg.extra)
                 continue
             return
 
-    def _stream_once(
-        self, url: str, request: TranslationRequest, with_extras: bool
-    ) -> Iterator[str]:
-        payload = self._payload(request, with_extras=with_extras)
+    def _live_extras(self) -> Dict[str, Any]:
+        """Extra fields not yet rejected by this server."""
+        return {
+            key: value
+            for key, value in (self.cfg.extra or {}).items()
+            if key not in self._blocked_extras
+        }
+
+    def _blocked_extras_shrinkable(self) -> bool:
+        return bool(self._live_extras())
+
+    def _stream_once(self, url: str, request: TranslationRequest) -> Iterator[str]:
+        payload = self._payload(request)
 
         try:
             with self._client.stream("POST", url, json=payload) as response:
@@ -182,3 +192,13 @@ def _is_bad_request(error: Exception) -> bool:
     """A 400 means the server disliked the request itself, not the network."""
     message = str(error)
     return "HTTP 400" in message or "400 -" in message
+
+
+def _rejected_fields(message: str, candidates: Dict[str, Any]) -> set:
+    """Which of our extra fields the error names, if any.
+
+    Servers usually quote the offending parameter, which lets the retry keep
+    everything else rather than throwing away settings that were working.
+    """
+    lowered = message.lower()
+    return {key for key in candidates if key.lower() in lowered}

@@ -713,6 +713,60 @@ def test_a_server_that_accepts_the_field_keeps_receiving_it(server, monkeypatch)
     provider = openai_provider(server, monkeypatch, extra={"reasoning_effort": "none"})
     try:
         assert list(provider.stream(REQUEST)) == ["سلام"]
-        assert provider._send_extras is True
+        assert provider._blocked_extras == set()
     finally:
         provider.close()
+
+
+def test_only_the_named_field_is_dropped(picky_server, monkeypatch):
+    """Other extras may be doing real work - keep_alive stops a local model
+    unloading mid-game - so a rejection must not discard them too."""
+    provider = openai_provider(
+        picky_server,
+        monkeypatch,
+        extra={"reasoning_effort": "none", "keep_alive": "30m"},
+    )
+    try:
+        assert list(provider.stream(REQUEST)) == ["سلام"]
+    finally:
+        provider.close()
+
+    final = PICKY["bodies"][-1]
+    assert "reasoning_effort" not in final, "the rejected field is gone"
+    assert final.get("keep_alive") == "30m", "the innocent field survived"
+    assert provider._blocked_extras == {"reasoning_effort"}
+
+
+def test_an_unhelpful_error_falls_back_to_dropping_everything(picky_server, monkeypatch):
+    """Not every server names the offending parameter."""
+    import gametrans.providers.openai_compat as module
+
+    monkeypatch.setattr(module, "_rejected_fields", lambda message, candidates: set())
+    provider = openai_provider(
+        picky_server,
+        monkeypatch,
+        extra={"reasoning_effort": "none", "keep_alive": "30m"},
+    )
+    try:
+        assert list(provider.stream(REQUEST)) == ["سلام"]
+    finally:
+        provider.close()
+
+    assert "reasoning_effort" not in PICKY["bodies"][-1]
+    assert "keep_alive" not in PICKY["bodies"][-1]
+
+
+def test_retrying_gives_up_rather_than_looping(picky_server, monkeypatch):
+    """If removing fields never helps, fail instead of retrying forever."""
+    import gametrans.providers.openai_compat as module
+
+    # Pretend the server dislikes something we are not actually sending.
+    monkeypatch.setattr(module, "_rejected_fields", lambda message, candidates: set())
+    provider = openai_provider(picky_server, monkeypatch, extra={})
+    PICKY["bodies"] = []
+    try:
+        # With no extras at all the request is accepted, so nothing to retry.
+        assert list(provider.stream(REQUEST)) == ["سلام"]
+    finally:
+        provider.close()
+    assert len(PICKY["bodies"]) == 1
