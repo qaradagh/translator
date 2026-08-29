@@ -83,11 +83,36 @@ pip install -e ".[rapidocr]"
 
 </div>
 
+<div dir="rtl">
+
+بعد کلید را ثبت کنید. ساده‌ترین راه — کلید در ترمینال نمایش داده نمی‌شود و در تاریخچه هم نمی‌ماند:
+
+</div>
+
 ```powershell
-setx GEMINI_API_KEY "کلید-شما"
-setx GROQ_API_KEY   "کلید-شما"
-# پنجره‌ی PowerShell را ببندید و دوباره باز کنید تا اعمال شود
+gametrans setkey gemini
+gametrans setkey groq
 ```
+
+<div dir="rtl">
+
+این کلید را در فایل `.env` کنار پروژه ذخیره می‌کند. اگر ترجیح می‌دهید دستی انجام دهید،
+همان فایل `.env` را با Notepad باز کنید و کلید را جلوی نامش بگذارید:
+
+</div>
+
+```ini
+GEMINI_API_KEY=AIza...
+GROQ_API_KEY=gsk_...
+```
+
+<div dir="rtl">
+
+فایل `.env` در `.gitignore` هست، پس کلید هیچ‌وقت روی گیت‌هاب نمی‌رود.
+اگر متغیر محیطی سیستم (`setx`) هم تنظیم شده باشد، آن اولویت دارد؛ `gametrans check`
+نشان می‌دهد هر کلید از کدام منبع خوانده شده.
+
+</div>
 
 <div dir="rtl">
 
@@ -96,8 +121,6 @@ setx GROQ_API_KEY   "کلید-شما"
 </div>
 
 ```powershell
-copy config.example.toml config.toml
-
 gametrans check          # بررسی اینکه همه‌چیز آماده است
 gametrans pick-region    # با ماوس روی ناحیه‌ی زیرنویس بکشید
 gametrans run            # شروع
@@ -122,6 +145,7 @@ gametrans run            # شروع
 
 ```powershell
 gametrans translate "You must reach the castle"   # تست ترجمه بدون بازی
+gametrans setkey gemini                           # ثبت کلید در فایل .env
 gametrans models                                  # لیست زنده‌ی مدل‌های هر سرویس
 gametrans bench                                   # اندازه‌گیری تاخیر هر مرحله
 gametrans monitors                                # فهرست مانیتورها
@@ -249,6 +273,8 @@ target_fps      = 20
 | «rate limited» در لاگ | کلید Groq را هم اضافه کنید تا زنجیره جابه‌جا شود |
 | «model not found» | `gametrans models` را بزنید و نام درست را در config بگذارید |
 | خطای دسترسی با کلید درست | سرویس در کشور شما در دسترس نیست — سراغ Ollama لوکال بروید |
+| `MISSING $GEMINI_API_KEY` | `gametrans setkey gemini` را بزنید |
+| کلید را گذاشتم ولی دیده نمی‌شود | `gametrans check` منبع کلید را نشان می‌دهد؛ فایل باید `.env` باشد نه `.env.txt` |
 | کلیدهای میان‌بر کار نمی‌کنند | اگر بازی با دسترسی مدیر اجرا می‌شود، برنامه را هم Run as administrator کنید |
 | فارسی بریده‌بریده است | یعنی فونت لود نشده — پوشه‌ی `assets/fonts` باید کنار پروژه باشد |
 | مصرف CPU زیاد | `target_fps` را ۸ کنید |
@@ -259,7 +285,7 @@ target_fps      = 20
 
 ```bash
 pip install -e ".[dev]"
-pytest -q          # ۱۲۵ تست، بدون نیاز به شبکه یا صفحه‌نمایش
+pytest -q          # ۱۴۶ تست، بدون نیاز به شبکه یا صفحه‌نمایش
 ```
 
 <div dir="rtl">
@@ -280,7 +306,7 @@ Real-time on-screen game text translator with a Persian (RTL) overlay. Captures 
 
 ```powershell
 pip install -e ".[windows,dxcam,hotkeys]"
-setx GEMINI_API_KEY "your-key"     # free: https://aistudio.google.com/apikey
+gametrans setkey gemini            # free key: https://aistudio.google.com/apikey
 gametrans check && gametrans pick-region && gametrans run
 ```
 

@@ -7,6 +7,10 @@ dist/
 venv/
 .pytest_cache/
 config.toml
+
+# API keys - never commit these
+.env
+.env.local
 *.sqlite3
 *.log
 .DS_Store
