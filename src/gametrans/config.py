@@ -236,11 +236,24 @@ def default_provider_chain() -> List[ProviderConfig]:
         ProviderConfig(
             name="ollama-local",
             kind="openai",
-            model="qwen3:8b",
+            # Aya Expanse is trained for multilingual work and measured best of
+            # the 8B-class models on Persian game dialogue: correct grammar and
+            # real Persian vocabulary, where others invented words or reached
+            # for Arabic ones. Run `gametrans compare-models` to check on your
+            # own hardware - the answer depends on the GPU and the quantisation.
+            model="aya-expanse:8b",
             api_key_env="",
             base_url="http://127.0.0.1:11434/v1",
             rpm_limit=0,
-            timeout_s=20.0,
+            timeout_s=30.0,
+            extra={
+                # Ollama unloads an idle model after a few minutes. Mid-game
+                # that means the next subtitle waits out a full reload, so keep
+                # it resident for a realistic play session.
+                "keep_alive": "30m",
+                # Silences the thinking mode on models that have one.
+                "reasoning_effort": "none",
+            },
             enabled=False,
         ),
     ]
