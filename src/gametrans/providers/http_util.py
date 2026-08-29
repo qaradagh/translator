@@ -7,11 +7,19 @@ than in either provider.
 
 from __future__ import annotations
 
+import re
+from typing import Optional
+
 import httpx
 
-from .base import AuthError, ProviderError, RateLimitError
+from .base import AuthError, ModelNotFoundError, ProviderError, RateLimitError
 
 DEFAULT_RETRY_AFTER_S = 20.0
+
+# Providers retire models constantly. Google's 404 body names the replacement,
+# e.g. "Please update your code to use models/gemini-3.5-flash-lite" - worth
+# capturing so the app can recover instead of just reporting a dead end.
+_SUGGESTED_MODEL_RE = re.compile(r"use\s+models/([A-Za-z0-9._\-]+)")
 
 
 def raise_for_status(response: httpx.Response, provider_name: str) -> None:
@@ -37,7 +45,18 @@ def raise_for_status(response: httpx.Response, provider_name: str) -> None:
         raise AuthError(f"{provider_name}: auth rejected ({status}) - {body}")
     if 500 <= status < 600:
         raise ProviderError(f"{provider_name}: server error {status} - {body}")
+    if status == 404:
+        raise ModelNotFoundError(
+            f"{provider_name}: model not available - {body}",
+            suggested_model=suggested_model(body),
+        )
     raise ProviderError(f"{provider_name}: HTTP {status} - {body}")
+
+
+def suggested_model(body: str) -> Optional[str]:
+    """Pull a replacement model name out of a provider's error message."""
+    match = _SUGGESTED_MODEL_RE.search(body or "")
+    return match.group(1) if match else None
 
 
 def retry_after_seconds(

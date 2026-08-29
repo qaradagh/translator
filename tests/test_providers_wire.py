@@ -480,3 +480,157 @@ def test_list_models_also_falls_back(auth_server, monkeypatch):
     finally:
         provider.close()
     assert len(AUTH_SCRIPT["seen"]) == 2
+
+
+# -- retired models ----------------------------------------------------------
+
+
+class RetiredModelHandler(BaseHTTPRequestHandler):
+    """404s the old model with Google's real message, serves the new one."""
+
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        MODEL_SCRIPT["requested"].append(self.path)
+        if MODEL_SCRIPT["always_404"] or MODEL_SCRIPT["live_model"] not in self.path:
+            body = json.dumps(
+                {
+                    "error": {
+                        "code": 404,
+                        "message": (
+                            "This model models/gemini-2.5-flash-lite is no longer "
+                            "available to new users. Please update your code to use "
+                            f"models/{MODEL_SCRIPT['live_model']} for the latest "
+                            "features and improvements."
+                        ),
+                        "status": "NOT_FOUND",
+                    }
+                }
+            ).encode()
+            self.send_response(404)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        length = int(self.headers.get("content-length", 0))
+        MODEL_SCRIPT["bodies"].append(json.loads(self.rfile.read(length) or b"{}"))
+
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.end_headers()
+        payload = {"candidates": [{"content": {"parts": [{"text": "سلام"}]}}]}
+        self.wfile.write(b"data: " + json.dumps(payload).encode() + b"\n\n")
+
+
+MODEL_SCRIPT = {
+    "live_model": "gemini-3.5-flash-lite",
+    # When set, every request 404s - even the suggested replacement - which is
+    # how a model name nothing recognises behaves.
+    "always_404": False,
+    "requested": [],
+    "bodies": [],
+}
+
+
+@pytest.fixture
+def retired_model_server():
+    httpd = HTTPServer(("127.0.0.1", 0), RetiredModelHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    MODEL_SCRIPT["requested"] = []
+    MODEL_SCRIPT["bodies"] = []
+    MODEL_SCRIPT["always_404"] = False
+    MODEL_SCRIPT["live_model"] = "gemini-3.5-flash-lite"
+    yield f"http://127.0.0.1:{httpd.server_port}"
+    httpd.shutdown()
+
+
+def test_retired_model_switches_to_the_suggested_replacement(
+    retired_model_server, monkeypatch
+):
+    """Google retires models and names the successor in the 404 body; using it
+    beats failing a translation the player is waiting on."""
+    provider = gemini_provider(retired_model_server, monkeypatch)
+    provider.cfg.model = "gemini-2.5-flash-lite"
+    try:
+        assert list(provider.stream(REQUEST)) == ["سلام"]
+        assert provider.cfg.model == "gemini-3.5-flash-lite"
+    finally:
+        provider.close()
+
+    assert "gemini-2.5-flash-lite" in MODEL_SCRIPT["requested"][0]
+    assert "gemini-3.5-flash-lite" in MODEL_SCRIPT["requested"][-1]
+
+
+def test_the_switch_happens_only_once(retired_model_server, monkeypatch):
+    """When even the suggested replacement 404s, give up instead of looping."""
+    MODEL_SCRIPT["always_404"] = True
+    provider = gemini_provider(retired_model_server, monkeypatch)
+    provider.cfg.model = "gemini-2.5-flash-lite"
+    try:
+        with pytest.raises(ProviderError):
+            list(provider.stream(REQUEST))
+    finally:
+        provider.close()
+
+    assert len(MODEL_SCRIPT["requested"]) == 2, "one original attempt plus one retry"
+
+
+def test_a_404_without_a_suggestion_is_not_retried(retired_model_server, monkeypatch):
+    from gametrans.providers.base import ModelNotFoundError
+
+    provider = gemini_provider(retired_model_server, monkeypatch)
+    provider.cfg.model = "gemini-2.5-flash-lite"
+    monkeypatch.setattr(
+        "gametrans.providers.http_util.suggested_model", lambda body: None
+    )
+    try:
+        with pytest.raises(ModelNotFoundError):
+            list(provider.stream(REQUEST))
+    finally:
+        provider.close()
+
+    assert len(MODEL_SCRIPT["requested"]) == 1, "nothing to switch to, so no retry"
+
+
+# -- thinking configuration --------------------------------------------------
+
+
+def test_gemini_3_uses_thinking_level_not_budget(retired_model_server, monkeypatch):
+    """Gemini 3.x replaced thinkingBudget with thinkingLevel, and sending both
+    in one request is a 400."""
+    provider = gemini_provider(retired_model_server, monkeypatch)
+    provider.cfg.model = "gemini-3.5-flash-lite"
+    try:
+        list(provider.stream(REQUEST))
+    finally:
+        provider.close()
+
+    thinking = MODEL_SCRIPT["bodies"][0]["generationConfig"]["thinkingConfig"]
+    assert thinking == {"thinkingLevel": "minimal"}
+    assert "thinkingBudget" not in thinking
+
+
+def test_pre_gemini_3_still_uses_thinking_budget():
+    from gametrans.providers.gemini import _thinking_config
+
+    assert _thinking_config("gemini-2.5-flash-lite") == {"thinkingBudget": 0}
+    assert _thinking_config("gemini-3.5-flash-lite") == {"thinkingLevel": "minimal"}
+    assert _thinking_config("gemini-3.1-flash-lite") == {"thinkingLevel": "minimal"}
+    # An unrecognisable name must not crash; fall back to the older parameter.
+    assert _thinking_config("") == {"thinkingBudget": 0}
+
+
+def test_suggested_model_extraction():
+    from gametrans.providers.http_util import suggested_model
+
+    body = (
+        "This model models/gemini-2.5-flash-lite is no longer available to new "
+        "users. Please update your code to use models/gemini-3.5-flash-lite for "
+        "the latest features."
+    )
+    assert suggested_model(body) == "gemini-3.5-flash-lite"
+    assert suggested_model("unrelated failure") is None
+    assert suggested_model("") is None
