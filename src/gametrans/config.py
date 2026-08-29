@@ -483,6 +483,85 @@ def update_section(path: str, section: str, values: Dict[str, Any]) -> None:
     target.write_text("".join(out), encoding="utf-8")
 
 
+def update_provider(path: str, provider_name: str, values: Dict[str, Any]) -> bool:
+    """Set keys inside the `[[translate.providers]]` block with this name.
+
+    A provider lives in an array-of-tables, so it cannot be addressed by section
+    name like the rest of the config - the block has to be found by reading the
+    `name` of each one. Returns False when no such provider exists.
+    """
+    target = Path(path)
+    if not target.exists():
+        return False
+
+    lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    header = "[[translate.providers]]"
+
+    # First pass: find where each provider block starts and what it is called.
+    blocks = []  # (start_index, end_index, name)
+    start = None
+    name = ""
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and not stripped.startswith("#"):
+            if start is not None:
+                blocks.append((start, index, name))
+                start, name = None, ""
+            if stripped == header:
+                start, name = index, ""
+            continue
+        if start is not None and stripped.startswith("name") and "=" in stripped:
+            name = stripped.split("=", 1)[1].strip().strip('"\'')
+    if start is not None:
+        blocks.append((start, len(lines), name))
+
+    match = next((b for b in blocks if b[2] == provider_name), None)
+    if match is None:
+        return False
+
+    begin, end, _ = match
+    remaining = dict(values)
+    out = list(lines[:begin + 1])
+    insert_at = begin
+
+    for line in lines[begin + 1:end]:
+        stripped = line.strip()
+        key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+        if key in remaining and not stripped.startswith("#"):
+            indent = line[: len(line) - len(line.lstrip())]
+            out.append(f"{indent}{key} = {_format_toml_value(remaining.pop(key))}\n")
+            insert_at = len(out) - 1
+            continue
+        if stripped and not stripped.startswith("#") and not stripped.startswith("["):
+            insert_at = len(out)
+        out.append(line)
+
+    if remaining:
+        added = [f"{key} = {_format_toml_value(value)}\n" for key, value in remaining.items()]
+        out[insert_at + 1 : insert_at + 1] = added
+
+    out.extend(lines[end:])
+    target.write_text("".join(out), encoding="utf-8")
+    return True
+
+
+def list_provider_names(path: str) -> List[str]:
+    """Names of the providers configured in a file, in order."""
+    target = Path(path)
+    if not target.exists():
+        return []
+    names = []
+    in_block = False
+    for line in target.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("["):
+            in_block = stripped == "[[translate.providers]]"
+            continue
+        if in_block and stripped.startswith("name") and "=" in stripped:
+            names.append(stripped.split("=", 1)[1].strip().strip('"\''))
+    return names
+
+
 def save_region(path: str, region: RegionConfig) -> None:
     """Persist just the [region] block, preserving the rest of the file.
 

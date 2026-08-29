@@ -65,6 +65,9 @@ def test_translate_without_preview_defaults_to_false():
         ["compare-models", "qwen3:8b", "gemma3:12b"],
         ["compare-models", "--base-url", "http://127.0.0.1:11434/v1"],
         ["compare-models", "--label", "Intel GPU", "--report", "gpu.html"],
+        ["use-model", "aya-expanse:8b"],
+        ["use-model", "aya-expanse:8b", "--only"],
+        ["use-model", "gemma3:4b", "--provider", "ollama-local"],
     ],
 )
 def test_documented_invocations_parse(argv):

@@ -120,11 +120,11 @@ def benchmark_model(
         return result
 
     try:
-        # Ollama loads a model into VRAM on first use, which for a 12B model can
-        # take longer than every translation combined. Timing that would rank
-        # models by file size rather than by speed, so pay it before the clock
-        # starts. Failures here are ignored: the timed pass will report them
-        # properly.
+        # Ollama loads a model on first use - into VRAM with a supported GPU,
+        # otherwise into system memory - and for a 12B model that can take
+        # longer than every translation combined. Timing it would rank models by
+        # file size rather than by speed, so pay it before the clock starts.
+        # Failures here are ignored: the timed pass will report them properly.
         try:
             warm = TranslationRequest(
                 text="Hello.",

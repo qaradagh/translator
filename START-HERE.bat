@@ -139,8 +139,9 @@ echo.
 echo   This translates the same game lines with every local model you have
 echo   installed, then opens a report so you can compare them side by side.
 echo.
-echo   Ollama must be running. The first line per model is slow because the
-echo   model has to load into memory.
+echo   Ollama must be running. Each model is loaded before timing starts, so
+echo   loading is not counted against it - but there will be a wait before
+echo   the first result appears.
 echo.
 pause
 python -m gametrans compare-models

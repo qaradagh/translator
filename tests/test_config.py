@@ -290,3 +290,92 @@ def test_update_section_escapes_quotes_in_values():
         cfg = load_config(path)
 
     assert cfg.translate.context_hint == 'a "quoted" game'
+
+
+# -- provider blocks (array-of-tables) ---------------------------------------
+
+PROVIDERS_TOML = """
+[translate]
+target_language = "Persian (Farsi)"
+
+# the cloud one
+[[translate.providers]]
+name = "gemini-flash-lite"
+kind = "gemini"
+model = "gemini-3.5-flash-lite"
+enabled = true
+
+# runs on this machine
+[[translate.providers]]
+name = "ollama-local"
+kind = "ollama"
+model = "qwen3:8b"
+# enabled = true
+enabled = false
+"""
+
+
+def test_list_provider_names_reads_them_in_order():
+    from gametrans.config import list_provider_names
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write(tmp, PROVIDERS_TOML)
+        assert list_provider_names(path) == ["gemini-flash-lite", "ollama-local"]
+
+
+def test_update_provider_edits_only_the_matching_block():
+    from gametrans.config import update_provider
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write(tmp, PROVIDERS_TOML)
+        assert update_provider(path, "ollama-local", {"model": "aya-expanse:8b", "enabled": True})
+        cfg = load_config(path)
+        body = open(path, encoding="utf-8").read()
+
+    local = next(p for p in cfg.translate.providers if p.name == "ollama-local")
+    cloud = next(p for p in cfg.translate.providers if p.name == "gemini-flash-lite")
+
+    assert local.model == "aya-expanse:8b"
+    assert local.enabled is True
+    # The other provider is untouched.
+    assert cloud.model == "gemini-3.5-flash-lite"
+    assert cloud.enabled is True
+    assert "# runs on this machine" in body    # comments survive
+    assert "# enabled = true" in body          # commented lines left alone
+
+
+def test_update_provider_can_disable_a_different_one():
+    from gametrans.config import update_provider
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write(tmp, PROVIDERS_TOML)
+        update_provider(path, "gemini-flash-lite", {"enabled": False})
+        cfg = load_config(path)
+
+    assert next(p for p in cfg.translate.providers if p.name == "gemini-flash-lite").enabled is False
+    assert next(p for p in cfg.translate.providers if p.name == "ollama-local").enabled is False
+
+
+def test_update_provider_adds_a_key_the_block_lacks():
+    from gametrans.config import update_provider
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write(tmp, PROVIDERS_TOML)
+        update_provider(path, "ollama-local", {"compact_prompt": True})
+        cfg = load_config(path)
+
+    assert next(p for p in cfg.translate.providers if p.name == "ollama-local").compact_prompt is True
+
+
+def test_update_provider_reports_an_unknown_name():
+    from gametrans.config import update_provider
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write(tmp, PROVIDERS_TOML)
+        assert update_provider(path, "not-configured", {"enabled": True}) is False
+
+
+def test_update_provider_on_a_missing_file_is_false():
+    from gametrans.config import update_provider
+
+    assert update_provider("/definitely/not/here.toml", "x", {"enabled": True}) is False
