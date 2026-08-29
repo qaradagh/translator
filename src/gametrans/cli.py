@@ -61,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     translate = sub.add_parser("translate", help="translate one string (no screen capture)")
     translate.add_argument("text", nargs="+", help="text to translate")
+    translate.add_argument(
+        "--preview",
+        action="store_true",
+        help="also show the result in the real overlay window",
+    )
 
     bench = sub.add_parser("bench", help="measure per-stage latency on the current region")
     bench.add_argument("--iterations", type=int, default=20)
@@ -159,8 +164,20 @@ def _cmd_check(cfg: AppConfig) -> int:
     import os
     import platform
 
+    import gametrans
+
     ok = True
-    print(f"gametrans {__version__} on {platform.system()} {platform.release()}\n")
+    print(f"gametrans {__version__} on {platform.system()} {platform.release()}")
+
+    # More than one copy of the project on disk is common, and a virtualenv can
+    # point at a different one than the folder you are standing in. Say which
+    # code is actually loaded so a stale install is obvious.
+    module_dir = os.path.dirname(os.path.abspath(gametrans.__file__))
+    print(f"running from: {module_dir}")
+    if os.path.commonpath([module_dir, os.getcwd()]) != os.getcwd():
+        print("  note: that is outside this folder - this venv may point at "
+              "another copy of the project")
+    print()
 
     print("OCR engines")
     from .ocr import create_backend
