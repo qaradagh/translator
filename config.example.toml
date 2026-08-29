@@ -1,0 +1,170 @@
+# gametrans — پیکربندی
+# این فایل را به config.toml کپی کنید و ویرایش کنید:
+#   copy config.example.toml config.toml
+#
+# همه‌ی مقادیر اختیاری‌اند؛ هرچه ننویسید، مقدار پیش‌فرض استفاده می‌شود.
+
+log_level = "INFO"   # DEBUG برای عیب‌یابی
+metrics   = true     # گزارش تاخیر هنگام خروج
+
+
+# ─────────────────────────────────────────────────────────────
+# ناحیه‌ی صفحه‌ای که زیرنویس در آن ظاهر می‌شود (پیکسل فیزیکی)
+# با دستور `gametrans pick-region` خودکار پر می‌شود.
+# ─────────────────────────────────────────────────────────────
+[region]
+left    = 0
+top     = 0
+width   = 0
+height  = 0
+monitor = 1
+
+
+# ─────────────────────────────────────────────────────────────
+# کپچر صفحه و دروازه‌ی تشخیص تغییر
+# مهم‌ترین بخش برای تاخیر: فریم‌های بدون تغییر اصلاً به OCR نمی‌رسند.
+# ─────────────────────────────────────────────────────────────
+[capture]
+backend    = "auto"   # auto | mss | dxcam  (dxcam روی ویندوز سریع‌تر است)
+target_fps = 12       # نرخ نمونه‌برداری. بالاتر = واکنش سریع‌تر، CPU بیشتر
+
+# آستانه‌ی «فریم عوض شده». اگر زیرنویس‌ها دیر تشخیص داده می‌شوند این دو را کم کنید؛
+# اگر بی‌دلیل ترجمه تکرار می‌شود، زیادشان کنید.
+hash_threshold  = 4
+pixel_threshold = 2.5
+
+
+# ─────────────────────────────────────────────────────────────
+# تشخیص متن (OCR)
+# ─────────────────────────────────────────────────────────────
+[ocr]
+backend        = "auto"    # auto | windows | rapidocr | tesseract
+languages      = ["en"]    # زبان متن بازی (نه زبان مقصد)
+upscale        = 2.0       # بزرگ‌نمایی قبل از OCR؛ برای زیرنویس ریز ۲ تا ۳ خوب است
+min_confidence = 0.45      # خطوط با اطمینان کمتر دور ریخته می‌شوند
+single_block   = true      # ناحیه را یک بلوک متنی یکپارچه فرض کن
+binarize       = false     # برای زیرنویس سفید روی زمینه‌ی تیره گاهی کمک می‌کند
+# tesseract_cmd = "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+
+
+# ─────────────────────────────────────────────────────────────
+# چه‌وقت متن «تمام‌شده» حساب شود
+# frames_required = 1 یعنی بلافاصله ترجمه کن (کمترین تاخیر، ریسک جمله‌ی نیمه)
+# ─────────────────────────────────────────────────────────────
+[stability]
+frames_required      = 2
+max_wait_ms          = 220   # سقف انتظار؛ بعد از این حتماً ترجمه می‌شود
+similarity_threshold = 0.93
+min_chars            = 2
+
+
+# ─────────────────────────────────────────────────────────────
+# ترجمه
+# ─────────────────────────────────────────────────────────────
+[translate]
+target_language = "Persian (Farsi)"
+source_language = "auto"
+stream          = true    # نمایش تدریجی متن به‌محض رسیدن توکن‌ها
+concurrency     = 3       # چند ترجمه هم‌زمان
+stale_after_ms  = 6000    # ترجمه‌ای که دیرتر از این برسد دور ریخته می‌شود
+
+# راهنمای لحن و فضای بازی — کیفیت ترجمه را محسوس بهتر می‌کند
+context_hint = ""
+# context_hint = "Elden Ring — فانتزی تاریک، لحن کهن و رسمی"
+
+cache_path        = "translation-cache.sqlite3"  # "" برای غیرفعال کردن
+cache_memory_size = 2048
+
+# واژه‌نامه: اصطلاحاتی که همیشه باید یکسان ترجمه شوند
+[translate.glossary]
+# "Site of Grace" = "جایگاه فیض"
+# "Estus Flask"   = "فلاسک اِستوس"
+
+
+# ─────────────────────────────────────────────────────────────
+# زنجیره‌ی موتورهای ترجمه
+# به ترتیب امتحان می‌شوند؛ هرکدام به سقف نرخ خورد یا خطا داد،
+# خودکار می‌رود سراغ بعدی.
+# ─────────────────────────────────────────────────────────────
+
+# ۱) Gemini — بهترین کیفیت فارسی بین گزینه‌های رایگان
+#    کلید رایگان: https://aistudio.google.com/apikey
+[[translate.providers]]
+name        = "gemini-flash-lite"
+kind        = "gemini"
+model       = "gemini-2.5-flash-lite"
+api_key_env = "GEMINI_API_KEY"
+rpm_limit   = 15      # سقف رایگان: ۱۵ درخواست در دقیقه
+timeout_s   = 10.0
+
+# ۲) Groq — سریع‌ترین، و سقف روزانه‌اش ۲۰ برابر Gemini است
+#    کلید رایگان: https://console.groq.com/keys
+[[translate.providers]]
+name        = "groq-llama"
+kind        = "openai"
+model       = "llama-3.3-70b-versatile"
+api_key_env = "GROQ_API_KEY"
+base_url    = "https://api.groq.com/openai/v1"
+rpm_limit   = 30
+timeout_s   = 10.0
+
+# ۳) مدل لوکال — کاملاً آفلاین و بدون سقف. برای فعال کردن enabled = true
+[[translate.providers]]
+name        = "ollama-local"
+kind        = "openai"
+model       = "qwen3:8b"
+base_url    = "http://127.0.0.1:11434/v1"
+rpm_limit   = 0
+timeout_s   = 20.0
+enabled     = false
+# مدل‌های استدلالی روی Ollama را با این پارامتر ساکت کنید:
+# extra = { reasoning_effort = "none" }
+
+# ۴) Claude — بهترین کیفیت فارسی در کل، ولی پولی. برای فعال کردن enabled = true
+# [[translate.providers]]
+# name        = "claude"
+# kind        = "anthropic"
+# model       = "claude-haiku-4-5"   # یا "claude-opus-5" برای کیفیت بالاتر
+# api_key_env = "ANTHROPIC_API_KEY"
+# timeout_s   = 12.0
+# enabled     = false
+
+
+# ─────────────────────────────────────────────────────────────
+# ظاهر اورلی
+# ─────────────────────────────────────────────────────────────
+[overlay]
+anchor            = "region"   # region = درست زیر ناحیه‌ی کپچر | custom = مختصات دستی
+# x = 0
+# y = 0
+# width = 0                    # ۰ یعنی هم‌عرض ناحیه
+
+font_family       = "Vazirmatn, Segoe UI, Tahoma, sans-serif"
+font_size         = 26
+font_weight       = 600
+
+text_color         = "#FFFFFF"
+background_color   = "#000000"
+background_opacity = 0.62
+outline_color      = "#000000"
+outline_width      = 2.4
+
+padding       = 14
+corner_radius = 10
+line_spacing  = 1.35
+max_lines     = 4
+linger_ms     = 1400    # چند میلی‌ثانیه بعد از محو شدن متن اصلی، ترجمه بماند
+
+show_source  = false    # نمایش متن اصلی زیر ترجمه
+show_latency = false    # نمایش زنده‌ی تاخیر و نرخ کش
+
+
+# ─────────────────────────────────────────────────────────────
+# کلیدهای میان‌بر سراسری (نیاز به: pip install "gametrans[hotkeys]")
+# ─────────────────────────────────────────────────────────────
+[hotkeys]
+enabled        = true
+toggle_pause   = "ctrl+alt+p"
+toggle_overlay = "ctrl+alt+h"
+pick_region    = "ctrl+alt+r"
+quit           = "ctrl+alt+q"
