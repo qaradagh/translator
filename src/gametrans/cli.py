@@ -634,7 +634,8 @@ def _cmd_compare_models(cfg: AppConfig, args) -> int:
         print(f"Found {len(models)}: {', '.join(models)}\n")
 
     print(f"Translating {len(SAMPLE_LINES)} lines with each of {len(models)} model(s).")
-    print("First run per model includes loading it into VRAM, so it will be slow.\n")
+    print("Each model is loaded before the clock starts, so load time is not")
+    print("counted - but expect a wait before the first result appears.\n")
 
     results = benchmark_models(
         models,
