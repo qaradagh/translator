@@ -363,28 +363,70 @@ def _cmd_translate(cfg: AppConfig, args) -> int:
         return 1
 
     translator.warmup()
+    streamed = {"text": "", "announced": False}
     started = time.perf_counter()
-    printed = {"n": 0}
 
     def on_chunk(accumulated: str, chunk: str) -> None:
-        if printed["n"] == 0:
-            print(f"[first token in {(time.perf_counter()-started)*1000:.0f} ms]")
-        printed["n"] += 1
+        if not streamed["announced"]:
+            streamed["announced"] = True
+            elapsed = (time.perf_counter() - started) * 1000.0
+            print(f"[first token in {elapsed:.0f} ms]")
+        streamed["text"] = accumulated
         print(chunk, end="", flush=True)
 
     outcome = translator.translate(text, on_chunk=on_chunk)
     print()
-    if outcome.ok:
-        source = "cache" if outcome.cached else outcome.provider
-        print(f"\n{outcome.text}")
-        print(f"\n[{source}] first token {outcome.first_token_ms:.0f} ms, "
-              f"total {outcome.total_ms:.0f} ms")
-        if outcome.attempts and len(outcome.attempts) > 1:
-            print(f"[failed over through: {' -> '.join(outcome.attempts)}]")
-    else:
+
+    if not outcome.ok:
         print(f"error: {outcome.error}", file=sys.stderr)
+        translator.close()
+        return 1
+
+    # The streamed text is raw; the final text has been sanitised. Only reprint
+    # when cleaning actually changed something.
+    if outcome.text != streamed["text"]:
+        print(f"\n{outcome.text}")
+
+    source = "cache" if outcome.cached else outcome.provider
+    print(
+        f"\n[{source}] first token {outcome.first_token_ms:.0f} ms, "
+        f"total {outcome.total_ms:.0f} ms"
+    )
+    if len(outcome.attempts) > 1:
+        print(f"[failed over through: {' -> '.join(outcome.attempts)}]")
+
+    _warn_about_console_rendering(outcome.text, preview=getattr(args, "preview", False))
     translator.close()
-    return 0 if outcome.ok else 1
+
+    if getattr(args, "preview", False):
+        from .overlay import show_preview
+
+        show_preview(outcome.text, text, cfg.overlay)
+
+    return 0
+
+
+def _warn_about_console_rendering(text: str, preview: bool = False) -> None:
+    """Windows consoles print right-to-left text in logical order.
+
+    The characters are correct but come out reversed and with the letters
+    unjoined, which reads as a broken translation when it is only a broken
+    terminal. Say so, rather than letting someone conclude the app is wrong.
+    """
+    import platform
+
+    from .textnorm import contains_persian
+
+    if preview or not contains_persian(text) or platform.system() != "Windows":
+        return
+
+    print(
+        "\nNote: this console shows Persian reversed, with the letters "
+        "unjoined - it\n"
+        "      does not implement bidirectional text. The in-game overlay "
+        "renders it\n"
+        "      correctly. Add --preview to see how it will really look."
+    )
 
 
 def _cmd_bench(cfg: AppConfig, args) -> int:
