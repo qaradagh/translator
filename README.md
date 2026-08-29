@@ -130,7 +130,7 @@ GROQ_API_KEY=gsk_...
   3  -  Choose the subtitle area          انتخاب ناحیه‌ی زیرنویس
   4  -  START TRANSLATING                 شروع ترجمه
   5  -  Test one translation              تست یک ترجمه
-  7  -  Update to the newest version      به‌روزرسانی
+  7  -  Update to the newest version      به‌روزرسانی (با یا بدون git)
 ```
 
 <div dir="rtl">
@@ -296,6 +296,8 @@ target_fps      = 20
 | خطای دسترسی با کلید درست | سرویس در کشور شما در دسترس نیست — سراغ Ollama لوکال بروید |
 | `MISSING $GEMINI_API_KEY` | `gametrans setkey gemini` را بزنید |
 | کلید را گذاشتم ولی دیده نمی‌شود | `gametrans check` منبع کلید را نشان می‌دهد؛ فایل باید `.env` باشد نه `.env.txt` |
+| `'gametrans' is not recognized` | در پنجره‌ی معمولی cmd دستور کار نمی‌کند — از `START-HERE.bat` استفاده کنید |
+| `git pull` خطا می‌دهد | فایل‌ها را ZIP دانلود کرده‌اید نه clone. از منو گزینه‌ی ۷ را بزنید |
 | کلیدهای میان‌بر کار نمی‌کنند | اگر بازی با دسترسی مدیر اجرا می‌شود، برنامه را هم Run as administrator کنید |
 | فارسی بریده‌بریده است | یعنی فونت لود نشده — پوشه‌ی `assets/fonts` باید کنار پروژه باشد |
 | در پنجره‌ی مشکی فارسی برعکس است | طبیعی است؛ cmd متن راست‌به‌چپ را پشتیبانی نمی‌کند. اورلی درست است — با `--preview` ببینید |

@@ -28,6 +28,8 @@ echo   ============================================================
 echo                          g a m e t r a n s
 echo             game subtitles, translated to Persian
 echo   ============================================================
+echo     folder: %CD%
+echo   ============================================================
 echo.
 echo     1  -  Add or change an API key
 echo     2  -  Check that everything is ready
@@ -137,14 +139,14 @@ goto menu
 :update
 cls
 echo.
+REM A git clone can pull. A folder unzipped from GitHub cannot - it is not a
+REM repository - so fall back to downloading and copying the current files.
+REM Flat gotos rather than nested if-blocks: cmd parses a whole parenthesised
+REM block before running it, which makes errorlevel checks inside one unreliable.
+if not exist "%~dp0.git" goto update_zip
 where git >nul 2>nul
-if errorlevel 1 (
-    echo   Git is not installed, so this copy cannot update itself.
-    echo   Download the newest version from GitHub instead.
-    echo.
-    pause
-    goto menu
-)
+if errorlevel 1 goto update_zip
+
 echo   Downloading the newest version...
 echo.
 git pull
@@ -156,6 +158,22 @@ echo   Done.
 echo.
 pause
 goto menu
+
+:update_zip
+echo   This copy was unzipped rather than cloned, so it will be refreshed by
+echo   downloading the current files from GitHub.
+echo.
+echo   Your API key, your settings and your cache are kept.
+echo.
+set "go="
+set /p "go=  Continue? (y/n): "
+if /i not "%go%"=="y" goto menu
+
+REM cmd.exe re-reads this batch file from disk as it runs, so rewriting it
+REM underneath a live process corrupts the rest of the run. Hand off to a
+REM detached PowerShell and exit immediately.
+start "gametrans update" powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\update.ps1" -ProjectDir "%~dp0."
+exit /b 0
 
 :settings
 cls
