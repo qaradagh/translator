@@ -177,3 +177,50 @@ def test_html_report_marks_failed_models(tmp_path):
     body = path.read_text(encoding="utf-8")
     assert "failed" in body
     assert "—" in body
+
+
+# -- fairness of the measurement --------------------------------------------
+
+
+def test_model_load_time_is_not_counted_against_the_model(endpoint, monkeypatch):
+    """The first request to Ollama loads the model into VRAM. Timing that would
+    rank models by file size rather than by speed."""
+    import gametrans.benchmark as bench
+
+    calls = {"n": 0}
+    real_stream = None
+
+    class SlowFirstCall:
+        def __init__(self, inner):
+            self.inner = inner
+            self.name = inner.name
+            self.cfg = inner.cfg
+
+        def stream(self, request):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                import time as _t
+                _t.sleep(0.4)  # stand-in for loading the model
+            return self.inner.stream(request)
+
+        def close(self):
+            self.inner.close()
+
+    original_build = bench.build_provider
+    bench.build_provider = lambda entry: SlowFirstCall(original_build(entry))
+    try:
+        result = benchmark_model("fast-model", endpoint, lines=SAMPLE_LINES[:3])
+    finally:
+        bench.build_provider = original_build
+
+    assert result.ok
+    assert calls["n"] == 4, "one warmup plus three timed lines"
+    # The 400ms load happened during the warmup, so no timed line carries it.
+    assert result.worst_total < 350, f"load time leaked into the timings: {result.total_ms}"
+
+
+def test_a_failing_warmup_does_not_hide_the_real_error(endpoint):
+    """The warmup is best-effort; the timed pass still reports what went wrong."""
+    result = benchmark_model("broken-model", endpoint, lines=SAMPLE_LINES[:1])
+    assert result.ok is False
+    assert result.error

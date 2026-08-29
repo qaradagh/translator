@@ -634,3 +634,85 @@ def test_suggested_model_extraction():
     assert suggested_model(body) == "gemini-3.5-flash-lite"
     assert suggested_model("unrelated failure") is None
     assert suggested_model("") is None
+
+
+# -- servers that reject provider-specific request fields --------------------
+
+
+class PickyHandler(BaseHTTPRequestHandler):
+    """Rejects any request carrying `reasoning_effort`, like some servers do."""
+
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        PICKY["bodies"].append(body)
+
+        if "reasoning_effort" in body:
+            payload = b'{"error":{"message":"unknown parameter: reasoning_effort"}}'
+            self.send_response(400)
+            self.send_header("content-length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.end_headers()
+        chunk = {"choices": [{"delta": {"content": "سلام"}}]}
+        self.wfile.write(b"data: " + json.dumps(chunk).encode() + b"\n\n")
+        self.wfile.write(b"data: [DONE]\n\n")
+
+
+PICKY = {"bodies": []}
+
+
+@pytest.fixture
+def picky_server():
+    httpd = HTTPServer(("127.0.0.1", 0), PickyHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    PICKY["bodies"] = []
+    yield f"http://127.0.0.1:{httpd.server_port}/v1"
+    httpd.shutdown()
+
+
+def test_unsupported_extra_fields_are_dropped_rather_than_failing(picky_server, monkeypatch):
+    """Which optional fields a server accepts varies by product and version.
+    A rejected field must not take the whole translation down with it."""
+    provider = openai_provider(picky_server, monkeypatch, extra={"reasoning_effort": "none"})
+    try:
+        assert list(provider.stream(REQUEST)) == ["سلام"]
+    finally:
+        provider.close()
+
+    assert len(PICKY["bodies"]) == 2, "one rejected attempt, then one without"
+    assert "reasoning_effort" in PICKY["bodies"][0]
+    assert "reasoning_effort" not in PICKY["bodies"][1]
+
+
+def test_the_field_is_not_sent_again_for_the_rest_of_the_session(picky_server, monkeypatch):
+    provider = openai_provider(picky_server, monkeypatch, extra={"reasoning_effort": "none"})
+    try:
+        list(provider.stream(REQUEST))
+        PICKY["bodies"] = []
+        list(provider.stream(REQUEST))
+    finally:
+        provider.close()
+
+    assert len(PICKY["bodies"]) == 1, "the second call should not retry"
+    assert "reasoning_effort" not in PICKY["bodies"][0]
+
+
+def test_a_server_that_accepts_the_field_keeps_receiving_it(server, monkeypatch):
+    SCRIPT.update(
+        status=200,
+        lines=["data: " + json.dumps({"choices": [{"delta": {"content": "سلام"}}]})],
+    )
+    provider = openai_provider(server, monkeypatch, extra={"reasoning_effort": "none"})
+    try:
+        assert list(provider.stream(REQUEST)) == ["سلام"]
+        assert provider._send_extras is True
+    finally:
+        provider.close()
