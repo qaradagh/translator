@@ -57,8 +57,12 @@ class OpenAICompatProvider(Provider):
             limits=httpx.Limits(max_keepalive_connections=4, max_connections=8),
             headers=headers,
         )
+        # Cleared for the session once a server rejects the extra fields.
+        self._send_extras = True
 
-    def _payload(self, request: TranslationRequest) -> Dict[str, Any]:
+    def _payload(
+        self, request: TranslationRequest, with_extras: bool = True
+    ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "model": self.cfg.model,
             "messages": [
@@ -69,13 +73,41 @@ class OpenAICompatProvider(Provider):
             "max_tokens": self.cfg.max_output_tokens,
             "stream": True,
         }
-        if self.cfg.extra:
+        if self.cfg.extra and with_extras and self._send_extras:
             payload.update(self.cfg.extra)
         return payload
 
     def stream(self, request: TranslationRequest) -> Iterator[str]:
         url = f"{self._base_url}/chat/completions"
-        payload = self._payload(request)
+
+        # Provider-specific fields such as `reasoning_effort` are accepted by
+        # some servers and rejected outright by others, and which is which
+        # changes between versions. Rather than maintain a compatibility table,
+        # send them and drop them permanently if the server objects.
+        attempts = [True, False] if (self.cfg.extra and self._send_extras) else [False]
+
+        for index, with_extras in enumerate(attempts):
+            produced = False
+            try:
+                for piece in self._stream_once(url, request, with_extras):
+                    produced = True
+                    yield piece
+            except ProviderError as exc:
+                is_last = index == len(attempts) - 1
+                if produced or is_last or not _is_bad_request(exc):
+                    raise
+                log.info(
+                    "%s rejected the extra request fields (%s); retrying without them",
+                    self.name, str(exc)[:120],
+                )
+                self._send_extras = False
+                continue
+            return
+
+    def _stream_once(
+        self, url: str, request: TranslationRequest, with_extras: bool
+    ) -> Iterator[str]:
+        payload = self._payload(request, with_extras=with_extras)
 
         try:
             with self._client.stream("POST", url, json=payload) as response:
@@ -144,3 +176,9 @@ def _delta_text(chunk: Dict[str, Any]) -> str:
     if isinstance(message.get("content"), str):
         return message["content"]
     return ""
+
+
+def _is_bad_request(error: Exception) -> bool:
+    """A 400 means the server disliked the request itself, not the network."""
+    message = str(error)
+    return "HTTP 400" in message or "400 -" in message
