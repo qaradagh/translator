@@ -31,17 +31,20 @@ echo   ============================================================
 echo     folder: %CD%
 echo   ============================================================
 echo.
+echo    SET UP
 echo     1  -  Add or change an API key
 echo     2  -  Check that everything is ready
 echo     3  -  Choose the subtitle area on screen
+echo.
 echo     4  -  START TRANSLATING
 echo.
+echo    TUNE
 echo     5  -  Test one translation (shows the real overlay)
-echo     6  -  Show which AI models are available
-echo     9  -  Compare local models (speed + Persian quality)
-echo     7  -  Update to the newest version
-echo     8  -  Change how the Persian text looks
+echo     6  -  Change how the Persian text looks
+echo     7  -  Compare local models (speed + Persian quality)
+echo     8  -  Show which AI models are available
 echo.
+echo     9  -  Update to the newest version
 echo     0  -  Exit
 echo.
 set "choice="
@@ -52,10 +55,10 @@ if "%choice%"=="2" goto check
 if "%choice%"=="3" goto region
 if "%choice%"=="4" goto run
 if "%choice%"=="5" goto testone
-if "%choice%"=="6" goto models
-if "%choice%"=="7" goto update
-if "%choice%"=="8" goto settings
-if "%choice%"=="9" goto compare
+if "%choice%"=="6" goto settings
+if "%choice%"=="7" goto compare
+if "%choice%"=="8" goto models
+if "%choice%"=="9" goto update
 if "%choice%"=="0" exit /b 0
 goto menu
 
@@ -189,6 +192,19 @@ if /i not "%go%"=="y" goto menu
 REM cmd.exe re-reads this batch file from disk as it runs, so rewriting it
 REM underneath a live process corrupts the rest of the run. Hand off to a
 REM detached PowerShell and exit immediately.
+if not exist "%~dp0tools\update.ps1" (
+    echo.
+    echo   This copy is too old to update itself - it predates the updater.
+    echo.
+    echo   Download it once by hand:
+    echo     https://github.com/qaradagh/translator
+    echo     green Code button  ^>  Download ZIP
+    echo   Extract over this folder and choose Replace. Your key is kept.
+    echo.
+    pause
+    goto menu
+)
+
 start "gametrans update" powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\update.ps1" -ProjectDir "%~dp0."
 exit /b 0
 

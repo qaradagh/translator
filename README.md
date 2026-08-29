@@ -147,15 +147,20 @@ GROQ_API_KEY=gsk_...
   1  -  Add or change an API key          ثبت کلید
   2  -  Check that everything is ready    بررسی آمادگی
   3  -  Choose the subtitle area          انتخاب ناحیه‌ی زیرنویس
+
   4  -  START TRANSLATING                 شروع ترجمه
-  5  -  Test one translation              تست یک ترجمه
-  7  -  Update to the newest version      به‌روزرسانی (با یا بدون git)
-  9  -  Compare local models              مقایسه‌ی مدل‌های لوکال
+
+  5  -  Test one translation              تست یک ترجمه با پیش‌نمایش
+  6  -  Change how the text looks         اندازه، رنگ، محل، تعداد خطوط
+  7  -  Compare local models              مقایسه‌ی مدل‌های لوکال
+  8  -  Show which models are available   لیست مدل‌ها
+
+  9  -  Update to the newest version      به‌روزرسانی (بدون نیاز به git)
 ```
 
 <div dir="rtl">
 
-بار اول به ترتیب ۱ ← ۲ ← ۳ ← ۴ را بزنید.
+بار اول به ترتیب ۱ ← ۲ ← ۳ ← ۴ را بزنید. برای به‌روزرسانی گزینه‌ی ۹ — به git نیاز ندارد.
 
 اگر ترمینال را ترجیح می‌دهید، همان کارها با دستور:
 
@@ -346,7 +351,7 @@ target_fps      = 20
 | `MISSING $GEMINI_API_KEY` | `gametrans setkey gemini` را بزنید |
 | کلید را گذاشتم ولی دیده نمی‌شود | `gametrans check` منبع کلید را نشان می‌دهد؛ فایل باید `.env` باشد نه `.env.txt` |
 | `'gametrans' is not recognized` | در پنجره‌ی معمولی cmd دستور کار نمی‌کند — از `START-HERE.bat` استفاده کنید |
-| `git pull` خطا می‌دهد | فایل‌ها را ZIP دانلود کرده‌اید نه clone. از منو گزینه‌ی ۷ را بزنید |
+| `git pull` خطا می‌دهد | یا git نصب نیست یا پوشه ZIP است — گزینه‌ی ۹ منو هر دو حالت را پوشش می‌دهد |
 | کلیدهای میان‌بر کار نمی‌کنند | اگر بازی با دسترسی مدیر اجرا می‌شود، برنامه را هم Run as administrator کنید |
 | فارسی بریده‌بریده است | یعنی فونت لود نشده — پوشه‌ی `assets/fonts` باید کنار پروژه باشد |
 | در پنجره‌ی مشکی فارسی برعکس است | طبیعی است؛ cmd متن راست‌به‌چپ را پشتیبانی نمی‌کند. اورلی درست است — با `--preview` ببینید |
