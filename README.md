@@ -51,11 +51,20 @@
 ```powershell
 git clone https://github.com/qaradagh/translator
 cd translator
+setup-windows.bat
+```
 
+<div dir="rtl">
+
+بدون git هم می‌شود: در صفحه‌ی گیت‌هاب دکمه‌ی سبز **Code** ← **Download ZIP**، بعد استخراج کنید و روی `setup-windows.bat` دوبار کلیک کنید. به‌روزرسانی از داخل منو در هر دو حالت کار می‌کند.
+
+اگر می‌خواهید دستی نصب کنید:
+
+</div>
+
+```powershell
 python -m venv .venv
 .venv\Scripts\activate
-
-# ویندوز — سریع‌ترین حالت (OCR داخلی ویندوز، بدون دانلود مدل)
 pip install -e ".[windows,dxcam,hotkeys]"
 ```
 

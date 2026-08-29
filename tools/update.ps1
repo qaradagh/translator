@@ -15,7 +15,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$ProjectDir,
     [string]$Repo = "qaradagh/translator",
-    [string]$Branch = "claude/game-subtitle-ai-translation-xuxlla"
+    [string]$Branch = "main"
 )
 
 $ErrorActionPreference = "Stop"
