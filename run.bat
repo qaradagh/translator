@@ -18,8 +18,6 @@ if not exist ".env" copy /y .env.example .env >nul
 python -m gametrans check
 if errorlevel 1 (
     echo.
-    echo Fix the items marked [--] above, then run this again.
-    echo To add an API key:  gametrans setkey gemini
     pause
     exit /b 1
 )

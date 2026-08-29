@@ -119,3 +119,76 @@ def test_launcher_covers_the_main_workflow():
     commands = {argv[0] for argv in _launcher_invocations() if argv}
     for required in ("setkey", "check", "pick-region", "run", "translate", "models"):
         assert required in commands, f"the menu no longer offers {required}"
+
+
+# -- `check` decides whether the launcher may proceed ------------------------
+
+
+class _FakeOcrBackend:
+    name = "windows"
+
+    def close(self):
+        pass
+
+
+@pytest.fixture
+def ready_environment(tmp_path, monkeypatch):
+    """A machine with a working OCR engine and one API key configured."""
+    import gametrans.cli as cli_module
+    import gametrans.ocr as ocr_module
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "AQ.AbTestKey")
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    real_create = ocr_module.create_backend
+
+    def fake_create(cfg):
+        if cfg.backend == "windows":
+            return _FakeOcrBackend()
+        return real_create(cfg)
+
+    monkeypatch.setattr(ocr_module, "create_backend", fake_create)
+    return cli_module
+
+
+def test_check_passes_when_only_the_region_is_missing(ready_environment, capsys):
+    """A missing region must not block the launcher: starting the app with no
+    region opens the picker, so failing here would dead-end the menu."""
+    assert ready_environment.main(["check"]) == 0
+
+    output = capsys.readouterr().out
+    assert "not set yet" in output
+    assert "pick-region" in output
+
+
+def test_check_fails_when_no_provider_is_configured(tmp_path, monkeypatch):
+    import gametrans.cli as cli_module
+    import gametrans.ocr as ocr_module
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setattr(ocr_module, "create_backend", lambda cfg: _FakeOcrBackend())
+
+    assert cli_module.main(["check"]) == 1
+
+
+def test_check_fails_when_no_ocr_engine_is_available(tmp_path, monkeypatch):
+    import gametrans.cli as cli_module
+    import gametrans.ocr as ocr_module
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GEMINI_API_KEY", "AQ.AbTestKey")
+
+    def no_ocr(cfg):
+        raise RuntimeError("nothing installed")
+
+    monkeypatch.setattr(ocr_module, "create_backend", no_ocr)
+    assert cli_module.main(["check"]) == 1
+
+
+def test_check_reports_where_the_code_is_loaded_from(ready_environment, capsys):
+    """Several copies of the project on disk is common; say which one is live."""
+    ready_environment.main(["check"])
+    assert "running from:" in capsys.readouterr().out
