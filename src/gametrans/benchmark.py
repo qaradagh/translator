@@ -65,18 +65,42 @@ class ModelResult:
         return max(self.total_ms) if self.total_ms else 0.0
 
 
+# Mirrors the local provider defaults in config.py. A benchmark that measures
+# a different code path than the app will actually use is worse than no
+# benchmark: it reports numbers nobody will ever see again.
+DEFAULT_LOCAL_EXTRA = {
+    "keep_alive": "30m",
+    "options": {"num_ctx": 2048, "num_predict": 256},
+}
+
+
 def benchmark_model(
     model: str,
     base_url: str,
-    kind: str = "openai",
+    kind: str = "ollama",
     api_key_env: str = "",
     lines: Sequence[str] = SAMPLE_LINES,
     target_language: str = "Persian (Farsi)",
     timeout_s: float = 60.0,
     extra: Optional[dict] = None,
+    compact_prompt: bool = True,
 ) -> ModelResult:
-    """Translate every sample line with one model and time each one."""
+    """Translate every sample line with one model and time each one.
+
+    Defaults match how the app talks to a local model - native API, compact
+    prompt, bounded context - so what is measured here is what will actually
+    run during a game.
+    """
     result = ModelResult(model=model)
+
+    if extra is None:
+        extra = (
+            dict(DEFAULT_LOCAL_EXTRA)
+            if kind == "ollama"
+            # A reasoning model on a hosted endpoint would otherwise think for
+            # seconds per line, which is not what this is measuring.
+            else {"reasoning_effort": "none"}
+        )
 
     entry = ProviderConfig(
         name=model,
@@ -85,9 +109,8 @@ def benchmark_model(
         base_url=base_url,
         api_key_env=api_key_env,
         timeout_s=timeout_s,
-        # Local reasoning models will think for many seconds per line unless
-        # told not to, which is not what this is measuring.
-        extra=extra if extra is not None else {"reasoning_effort": "none"},
+        compact_prompt=compact_prompt,
+        extra=extra,
     )
 
     try:
@@ -103,14 +126,22 @@ def benchmark_model(
         # starts. Failures here are ignored: the timed pass will report them
         # properly.
         try:
-            warm = TranslationRequest(text="Hello.", target_language=target_language)
+            warm = TranslationRequest(
+                text="Hello.",
+                target_language=target_language,
+                compact_prompt=compact_prompt,
+            )
             for _ in provider.stream(warm):
                 pass
         except Exception as exc:
             log.debug("warmup for %s failed: %s", model, exc)
 
         for line in lines:
-            request = TranslationRequest(text=line, target_language=target_language)
+            request = TranslationRequest(
+                text=line,
+                target_language=target_language,
+                compact_prompt=compact_prompt,
+            )
             started = time.perf_counter()
             first_token = 0.0
             pieces: List[str] = []

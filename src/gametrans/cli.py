@@ -79,8 +79,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare.add_argument(
         "--base-url",
-        default="http://127.0.0.1:11434/v1",
-        help="OpenAI-compatible endpoint (default: local Ollama)",
+        default="http://127.0.0.1:11434",
+        help="Ollama address (default: the local one)",
     )
     compare.add_argument(
         "--report", default="model-comparison.html", help="where to write the report"
@@ -615,7 +615,7 @@ def _cmd_compare_models(cfg: AppConfig, args) -> int:
         try:
             lister = build_provider(
                 ProviderConfig(
-                    name="probe", kind="openai", model="probe", base_url=args.base_url
+                    name="probe", kind="ollama", model="probe", base_url=args.base_url
                 )
             )
             models = lister.list_models()

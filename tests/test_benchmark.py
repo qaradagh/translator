@@ -61,11 +61,50 @@ def endpoint():
     httpd.shutdown()
 
 
+# -- a stand-in for Ollama's native API --------------------------------------
+
+OLLAMA_STATE = {"bodies": []}
+
+
+class OllamaStyleHandler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        body = json.dumps({"models": [{"name": "aya-expanse:8b"}]}).encode()
+        self.send_response(200)
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        length = int(self.headers.get("content-length", 0))
+        OLLAMA_STATE["bodies"].append(json.loads(self.rfile.read(length) or b"{}"))
+        self.send_response(200)
+        self.send_header("content-type", "application/x-ndjson")
+        self.end_headers()
+        self.wfile.write(
+            json.dumps({"message": {"content": "سلام"}, "done": False}).encode() + b"\n"
+        )
+        self.wfile.write(
+            json.dumps({"message": {"content": ""}, "done": True}).encode() + b"\n"
+        )
+
+
+@pytest.fixture
+def ollama_style_endpoint():
+    httpd = HTTPServer(("127.0.0.1", 0), OllamaStyleHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    OLLAMA_STATE["bodies"] = []
+    yield f"http://127.0.0.1:{httpd.server_port}"
+    httpd.shutdown()
+
+
 # -- measuring ---------------------------------------------------------------
 
 
 def test_benchmark_translates_every_sample_line(endpoint):
-    result = benchmark_model("fast-model", endpoint)
+    result = benchmark_model("fast-model", endpoint, kind="openai")
     assert result.ok
     assert len(result.translations) == len(SAMPLE_LINES)
     assert all(t for t in result.translations)
@@ -73,33 +112,33 @@ def test_benchmark_translates_every_sample_line(endpoint):
 
 
 def test_benchmark_records_timings(endpoint):
-    result = benchmark_model("fast-model", endpoint, lines=SAMPLE_LINES[:2])
+    result = benchmark_model("fast-model", endpoint, kind="openai", lines=SAMPLE_LINES[:2])
     assert result.median_total > 0
     assert result.worst_total >= result.median_total
 
 
 def test_a_failing_model_is_reported_not_raised(endpoint):
-    result = benchmark_model("broken-model", endpoint)
+    result = benchmark_model("broken-model", endpoint, kind="openai")
     assert result.ok is False
     assert result.error
 
 
 def test_an_unreachable_endpoint_is_reported(endpoint):
-    result = benchmark_model("any", "http://127.0.0.1:1/v1")
+    result = benchmark_model("any", "http://127.0.0.1:1/v1", kind="openai")
     assert result.ok is False
     assert result.error
 
 
 def test_benchmark_models_runs_each_candidate(endpoint):
     results = benchmark_models(
-        ["fast-model", "slow-model"], endpoint, lines=SAMPLE_LINES[:1]
+        ["fast-model", "slow-model"], endpoint, kind="openai", lines=SAMPLE_LINES[:1]
     )
     assert [r.model for r in results] == ["fast-model", "slow-model"]
     assert all(r.ok for r in results)
 
 
-def test_reasoning_is_disabled_by_default(endpoint):
-    """Local reasoning models will think for seconds per line otherwise, which
+def test_reasoning_is_disabled_on_a_hosted_endpoint(endpoint):
+    """A reasoning model would otherwise think for seconds per line, which
     measures the wrong thing entirely."""
     from gametrans.config import ProviderConfig
 
@@ -115,7 +154,7 @@ def test_reasoning_is_disabled_by_default(endpoint):
     original = bench.build_provider
     bench.build_provider = spy
     try:
-        benchmark_model("fast-model", endpoint, lines=SAMPLE_LINES[:1])
+        benchmark_model("fast-model", endpoint, kind="openai", lines=SAMPLE_LINES[:1])
     finally:
         bench.build_provider = original
 
@@ -209,7 +248,7 @@ def test_model_load_time_is_not_counted_against_the_model(endpoint, monkeypatch)
     original_build = bench.build_provider
     bench.build_provider = lambda entry: SlowFirstCall(original_build(entry))
     try:
-        result = benchmark_model("fast-model", endpoint, lines=SAMPLE_LINES[:3])
+        result = benchmark_model("fast-model", endpoint, kind="openai", lines=SAMPLE_LINES[:3])
     finally:
         bench.build_provider = original_build
 
@@ -221,7 +260,7 @@ def test_model_load_time_is_not_counted_against_the_model(endpoint, monkeypatch)
 
 def test_a_failing_warmup_does_not_hide_the_real_error(endpoint):
     """The warmup is best-effort; the timed pass still reports what went wrong."""
-    result = benchmark_model("broken-model", endpoint, lines=SAMPLE_LINES[:1])
+    result = benchmark_model("broken-model", endpoint, kind="openai", lines=SAMPLE_LINES[:1])
     assert result.ok is False
     assert result.error
 
@@ -251,3 +290,39 @@ def test_report_without_a_label_still_carries_a_timestamp(tmp_path):
     path = write_html_report(results, tmp_path / "r.html", lines=["Hello"])
     body = path.read_text(encoding="utf-8")
     assert datetime.datetime.now().strftime("%Y-%m-%d") in body
+
+
+def test_benchmark_defaults_match_how_the_app_runs_a_local_model():
+    """A benchmark measuring a different code path than the app will use
+    reports numbers nobody will ever see again."""
+    import inspect
+
+    from gametrans.benchmark import DEFAULT_LOCAL_EXTRA, benchmark_model
+    from gametrans.config import default_provider_chain
+
+    signature = inspect.signature(benchmark_model)
+    assert signature.parameters["kind"].default == "ollama"
+    assert signature.parameters["compact_prompt"].default is True
+
+    local = next(p for p in default_provider_chain() if p.name == "ollama-local")
+    assert local.kind == "ollama"
+    assert local.compact_prompt is True
+    assert DEFAULT_LOCAL_EXTRA["options"]["num_ctx"] == local.extra["options"]["num_ctx"]
+    assert DEFAULT_LOCAL_EXTRA["keep_alive"] == local.extra["keep_alive"]
+
+
+def test_local_defaults_send_the_ollama_speed_settings(ollama_style_endpoint):
+    """The whole point of the native path: these settings reach the server."""
+    from gametrans.benchmark import benchmark_model
+
+    result = benchmark_model(
+        "aya-expanse:8b", ollama_style_endpoint, lines=["Hello"], timeout_s=10.0
+    )
+    assert result.ok
+
+    body = OLLAMA_STATE["bodies"][-1]
+    assert body["think"] is False
+    assert body["options"]["num_ctx"] == 2048
+    assert body["keep_alive"] == "30m"
+    # Compact prompt, not the long hosted-model one.
+    assert len(body["messages"][0]["content"]) < 400
