@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gametrans"
-version = "0.1.0"
+version = "0.2.0"
 description = "Low-latency on-screen game text translator with Persian (RTL) overlay"
 readme = "README.md"
 requires-python = ">=3.9"
