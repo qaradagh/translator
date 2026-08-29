@@ -40,7 +40,7 @@ echo     5  -  Test one translation (shows the real overlay)
 echo     6  -  Show which AI models are available
 echo     9  -  Compare local models (speed + Persian quality)
 echo     7  -  Update to the newest version
-echo     8  -  Open the settings file
+echo     8  -  Change how the Persian text looks
 echo.
 echo     0  -  Exit
 echo.
@@ -195,8 +195,7 @@ exit /b 0
 :settings
 cls
 echo.
-echo   Opening the settings file in Notepad.
-echo   Save and close it when you are finished.
+python -m gametrans settings
 echo.
-notepad config.toml
+pause
 goto menu

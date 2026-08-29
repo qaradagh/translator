@@ -50,6 +50,7 @@ def test_translate_without_preview_defaults_to_false():
         ["run", "--fps", "20"],
         ["pick-region"],
         ["monitors"],
+        ["settings"],
         ["check"],
         ["models"],
         ["setkey"],
@@ -120,7 +121,9 @@ def test_every_launcher_command_line_parses(argv):
 
 def test_launcher_covers_the_main_workflow():
     commands = {argv[0] for argv in _launcher_invocations() if argv}
-    for required in ("setkey", "check", "pick-region", "run", "translate", "models"):
+    for required in (
+        "setkey", "check", "pick-region", "run", "translate", "models", "settings"
+    ):
         assert required in commands, f"the menu no longer offers {required}"
 
 

@@ -167,8 +167,16 @@ class OverlayConfig:
     outline_width: float = 2.4
     line_spacing: float = 1.35
     max_lines: int = 4
-    # Keep the previous line visible for this long after the source text disappears.
-    linger_ms: int = 1400
+    # Keep a line visible for this long after its source text disappears.
+    linger_ms: int = 2600
+    # How many recent lines to keep on screen at once. Game dialogue often moves
+    # faster than it can be read in a second language, so stacking the last few
+    # lines gives you time to catch up. 1 restores single-line behaviour.
+    history_lines: int = 3
+    # Older lines are dimmed so the newest one still reads as "now".
+    history_dim: float = 0.55
+    # Milliseconds a line spends fading out, rather than vanishing abruptly.
+    fade_ms: int = 450
     # Also show the original text under the translation.
     show_source: bool = False
     show_latency: bool = False
@@ -374,6 +382,77 @@ def _apply_env_overrides(cfg: AppConfig) -> None:
             cfg.capture.target_fps = int(env["GAMETRANS_TARGET_FPS"])
         except ValueError:
             pass
+
+
+def _format_toml_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def update_section(path: str, section: str, values: Dict[str, Any]) -> None:
+    """Set keys inside one `[section]`, preserving everything else.
+
+    Written line by line rather than by re-serialising the document, because the
+    config file is mostly comments explaining what each knob does - and those
+    comments are how someone edits it by hand later.
+    """
+    target = Path(path)
+    remaining = dict(values)
+    header = f"[{section}]"
+
+    if not target.exists():
+        body = header + "\n" + "".join(
+            f"{key} = {_format_toml_value(value)}\n" for key, value in remaining.items()
+        )
+        target.write_text(body, encoding="utf-8")
+        return
+
+    lines = target.read_text(encoding="utf-8").splitlines(keepends=True)
+    out: List[str] = []
+    in_section = False
+    # Where a new key should go: after the section's last real setting, or
+    # directly after the header when the section has none yet. -1 means the
+    # section is not in the file at all.
+    insert_after = -1
+
+    for line in lines:
+        stripped = line.strip()
+
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_section = stripped == header
+            out.append(line)
+            if in_section:
+                insert_after = len(out) - 1
+            continue
+
+        if in_section:
+            key = stripped.split("=", 1)[0].strip()
+            # Leave commented-out lines alone; they are documentation.
+            if key in remaining and not stripped.startswith("#"):
+                indent = line[: len(line) - len(line.lstrip())]
+                out.append(f"{indent}{key} = {_format_toml_value(remaining.pop(key))}\n")
+                insert_after = len(out) - 1
+                continue
+            if stripped and not stripped.startswith("#"):
+                insert_after = len(out)
+
+        out.append(line)
+
+    if remaining:
+        added = [f"{key} = {_format_toml_value(value)}\n" for key, value in remaining.items()]
+        if insert_after >= 0:
+            out[insert_after + 1 : insert_after + 1] = added
+        else:
+            if out and not out[-1].endswith("\n"):
+                out.append("\n")
+            out.append("\n" + header + "\n")
+            out.extend(added)
+
+    target.write_text("".join(out), encoding="utf-8")
 
 
 def save_region(path: str, region: RegionConfig) -> None:
