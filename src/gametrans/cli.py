@@ -167,6 +167,7 @@ def _cmd_check(cfg: AppConfig) -> int:
     import gametrans
 
     ok = True
+    needs_region = False
     print(f"gametrans {__version__} on {platform.system()} {platform.release()}")
 
     # More than one copy of the project on disk is common, and a virtualenv can
@@ -226,8 +227,9 @@ def _cmd_check(cfg: AppConfig) -> int:
     if cfg.region.is_set:
         print(f"  [ok]   {cfg.region.as_tuple()} on monitor {cfg.region.monitor}")
     else:
-        ok = False
-        print("  [--]   not set - run: gametrans pick-region")
+        # Not a blocker: starting the app with no region opens the picker.
+        needs_region = True
+        print("  [..]   not set yet - you will be asked to draw it on first run")
 
     print("\nHotkeys")
     from .hotkeys import HotkeyManager
@@ -239,8 +241,21 @@ def _cmd_check(cfg: AppConfig) -> int:
     else:
         print(f"  [--]   {manager.reason} (optional)")
 
-    print("\n" + ("All required components are ready." if ok else "Fix the [--] items above."))
-    return 0 if ok else 1
+    print()
+    if not ok:
+        print("Something required is missing - see the [--] lines above.")
+        return 1
+
+    if needs_region:
+        print("Ready. Next: choose the area of the screen to watch")
+        print("  menu option 3, or:  gametrans pick-region")
+    else:
+        print("Everything is ready. Start with menu option 4, or:  gametrans run")
+    print()
+    print("Optional extras, only if you want them:")
+    print("  a second provider so translation continues past Gemini's")
+    print("  per-minute limit:  gametrans setkey groq")
+    return 0
 
 
 # Google issues two key formats: older standard keys ("AIza...") and the newer
