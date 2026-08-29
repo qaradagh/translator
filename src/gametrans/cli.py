@@ -226,10 +226,20 @@ def _cmd_check(cfg: AppConfig) -> int:
     return 0 if ok else 1
 
 
+# Google issues two key formats: older standard keys ("AIza...") and the newer
+# auth keys ("AQ.Ab..."), which is what AI Studio hands out now. Accept both.
 _KEY_ENV_VARS = {
-    "gemini": ("GEMINI_API_KEY", "https://aistudio.google.com/apikey", "AIza"),
-    "groq": ("GROQ_API_KEY", "https://console.groq.com/keys", "gsk_"),
-    "anthropic": ("ANTHROPIC_API_KEY", "https://console.anthropic.com/settings/keys", "sk-ant-"),
+    "gemini": (
+        "GEMINI_API_KEY",
+        "https://aistudio.google.com/apikey",
+        ("AQ.", "AIza"),
+    ),
+    "groq": ("GROQ_API_KEY", "https://console.groq.com/keys", ("gsk_",)),
+    "anthropic": (
+        "ANTHROPIC_API_KEY",
+        "https://console.anthropic.com/settings/keys",
+        ("sk-ant-",),
+    ),
 }
 
 
@@ -258,9 +268,10 @@ def _cmd_setkey(args) -> int:
             print("error: unrecognised choice", file=sys.stderr)
             return 2
 
-    env_var, signup_url, prefix = _KEY_ENV_VARS[provider]
+    env_var, signup_url, prefixes = _KEY_ENV_VARS[provider]
+    shown = " or ".join(f"'{p}'" for p in prefixes)
     print(f"\nGet a key at: {signup_url}")
-    print(f"It starts with '{prefix}'. Nothing is echoed as you paste.\n")
+    print(f"It starts with {shown}. Nothing is echoed as you paste.\n")
 
     try:
         value = getpass.getpass(f"{env_var}: ").strip()
@@ -272,9 +283,9 @@ def _cmd_setkey(args) -> int:
         print("error: no key entered", file=sys.stderr)
         return 1
 
-    if not value.startswith(prefix):
+    if not value.startswith(prefixes):
         print(
-            f"warning: a {provider} key usually starts with '{prefix}' - "
+            f"warning: a {provider} key usually starts with {shown} - "
             "double-check you pasted the whole thing."
         )
 

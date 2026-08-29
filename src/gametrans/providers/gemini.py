@@ -50,11 +50,17 @@ class GeminiProvider(Provider):
             http2=False,
             timeout=httpx.Timeout(cfg.timeout_s, connect=min(cfg.timeout_s, 5.0)),
             limits=httpx.Limits(max_keepalive_connections=4, max_connections=8),
-            headers={
-                "x-goog-api-key": self._api_key,
-                "content-type": "application/json",
-            },
+            headers={"content-type": "application/json"},
         )
+        # Google issues two key formats: the older "AIza..." standard keys and
+        # the newer "AQ.Ab..." auth keys, which are bound to a service account.
+        # Both are documented for the x-goog-api-key header, but auth keys are
+        # rejected on some paths unless sent as a bearer token. Start with the
+        # documented header and fall back once on an auth failure rather than
+        # guessing from the prefix - the server is the authority, not the shape
+        # of the string. Never send both: the API rejects that as an ambiguous
+        # credential.
+        self._auth_mode = "api-key"
 
     # -- request building ----------------------------------------------------
 
@@ -89,12 +95,20 @@ class GeminiProvider(Provider):
 
     # -- streaming -----------------------------------------------------------
 
-    def stream(self, request: TranslationRequest) -> Iterator[str]:
-        url = f"{self._base_url}/models/{self.cfg.model}:streamGenerateContent?alt=sse"
-        payload = self._payload(request)
+    def _auth_headers(self, mode: str) -> Dict[str, str]:
+        if mode == "bearer":
+            return {"authorization": f"Bearer {self._api_key}"}
+        return {"x-goog-api-key": self._api_key}
 
+    def _auth_modes(self) -> list:
+        """The mode that last worked, then the other one as a fallback."""
+        return [self._auth_mode, "bearer" if self._auth_mode == "api-key" else "api-key"]
+
+    def _stream_once(self, url: str, payload: Dict[str, Any], mode: str) -> Iterator[str]:
         try:
-            with self._client.stream("POST", url, json=payload) as response:
+            with self._client.stream(
+                "POST", url, json=payload, headers=self._auth_headers(mode)
+            ) as response:
                 raise_for_status(response, self.name)
                 for line in response.iter_lines():
                     if not line or not line.startswith("data:"):
@@ -113,18 +127,60 @@ class GeminiProvider(Provider):
         except httpx.HTTPError as exc:
             raise ProviderError(f"{self.name}: {exc}") from exc
 
+    def stream(self, request: TranslationRequest) -> Iterator[str]:
+        url = f"{self._base_url}/models/{self.cfg.model}:streamGenerateContent?alt=sse"
+        payload = self._payload(request)
+        modes = self._auth_modes()
+
+        for index, mode in enumerate(modes):
+            produced = False
+            try:
+                for piece in self._stream_once(url, payload, mode):
+                    produced = True
+                    yield piece
+            except AuthError:
+                # Only retry when nothing was emitted yet - a mid-stream failure
+                # cannot be replayed without duplicating output.
+                if produced or index == len(modes) - 1:
+                    raise
+                log.info(
+                    "%s: key rejected as %s, retrying as %s",
+                    self.name, mode, modes[index + 1],
+                )
+                continue
+            # Remember what worked so later subtitles pay no retry cost.
+            self._auth_mode = mode
+            return
+
     def warmup(self) -> None:
         try:
-            self._client.get(f"{self._base_url}/models/{self.cfg.model}", timeout=4.0)
+            self._client.get(
+                f"{self._base_url}/models/{self.cfg.model}",
+                headers=self._auth_headers(self._auth_mode),
+                timeout=4.0,
+            )
         except httpx.HTTPError:
             pass
 
     def list_models(self) -> List[str]:
-        try:
-            response = self._client.get(f"{self._base_url}/models", timeout=10.0)
-        except httpx.HTTPError as exc:
-            raise ProviderError(f"{self.name}: {exc}") from exc
-        raise_for_status(response, self.name)
+        response = None
+        for index, mode in enumerate(self._auth_modes()):
+            try:
+                response = self._client.get(
+                    f"{self._base_url}/models",
+                    headers=self._auth_headers(mode),
+                    timeout=10.0,
+                )
+            except httpx.HTTPError as exc:
+                raise ProviderError(f"{self.name}: {exc}") from exc
+
+            if response.status_code in (401, 403) and index == 0:
+                continue
+            raise_for_status(response, self.name)
+            self._auth_mode = mode
+            break
+        else:  # pragma: no cover - the loop always breaks or raises
+            raise_for_status(response, self.name)
 
         names = []
         for model in response.json().get("models", []):
