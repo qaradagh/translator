@@ -152,6 +152,12 @@ class Translator:
             glossary=self.cfg.glossary,
         )
 
+        # Every provider rate limited is the normal state on a free tier during
+        # a talkative scene, not an error. Dropping the line loses it forever;
+        # waiting a beat costs a little latency and keeps the subtitle. Only
+        # give up when the wait would outlive the line itself.
+        self._wait_for_a_slot(is_cancelled)
+
         last_error: Optional[str] = None
         for provider in self._ordered_providers():
             if is_cancelled and is_cancelled():
@@ -210,7 +216,16 @@ class Translator:
             self.cache.put(text, cleaned, provider.name)
             return outcome
 
-        outcome.error = last_error or "no provider available"
+        if last_error is None:
+            soonest = min(
+                (p.limiter.seconds_until_available() for p in self._providers),
+                default=0.0,
+            )
+            last_error = (
+                f"all providers rate limited for another {soonest:.0f}s - "
+                "add a second provider (gametrans setkey groq) or a local model"
+            )
+        outcome.error = last_error
         outcome.total_ms = (time.perf_counter() - started) * 1000.0
         self.metrics.increment("translate_failed")
         return outcome
@@ -240,6 +255,34 @@ class Translator:
                 break
 
         return "".join(buffer), first_token_ms
+
+    def _wait_for_a_slot(self, is_cancelled: Optional[Callable[[], bool]]) -> None:
+        """Block briefly when every provider is rate limited.
+
+        Sleeps in short steps so a cancellation - the subtitle leaving the
+        screen - is noticed promptly rather than after the full wait.
+        """
+        budget = self.cfg.max_wait_for_slot_ms / 1000.0
+        if budget <= 0:
+            return
+
+        with self._lock:
+            providers = list(self._providers)
+        if any(p.limiter.available() for p in providers):
+            return
+
+        soonest = min((p.limiter.seconds_until_available() for p in providers), default=0.0)
+        if soonest <= 0 or soonest > budget:
+            if soonest > budget:
+                log.debug("all providers busy for %.1fs, longer than the budget", soonest)
+            return
+
+        self.metrics.increment("waited_for_rate_limit")
+        deadline = time.monotonic() + soonest
+        while time.monotonic() < deadline:
+            if is_cancelled and is_cancelled():
+                return
+            time.sleep(min(0.05, deadline - time.monotonic()))
 
     def _ordered_providers(self) -> List[Provider]:
         """Chain order, but skip providers currently blocked by a 429."""

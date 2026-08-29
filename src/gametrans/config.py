@@ -135,6 +135,10 @@ class TranslateConfig:
     concurrency: int = 3
     # Drop a translation whose source line is already off-screen.
     stale_after_ms: int = 6000
+    # When every provider is rate limited, wait up to this long for a slot
+    # rather than dropping the line. Free tiers are slow enough that a talkative
+    # scene will hit the limit routinely; a subtitle a second late still helps.
+    max_wait_for_slot_ms: int = 2500
     # Extra instructions appended to the system prompt (game name, tone, etc).
     context_hint: str = ""
     # Glossary of terms that must always translate the same way: {source: target}

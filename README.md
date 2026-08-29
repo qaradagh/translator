@@ -150,6 +150,7 @@ GROQ_API_KEY=gsk_...
   4  -  START TRANSLATING                 شروع ترجمه
   5  -  Test one translation              تست یک ترجمه
   7  -  Update to the newest version      به‌روزرسانی (با یا بدون git)
+  9  -  Compare local models              مقایسه‌ی مدل‌های لوکال
 ```
 
 <div dir="rtl">
@@ -187,6 +188,7 @@ gametrans run            # شروع
 gametrans translate --preview "You must reach the castle"   # تست ترجمه با پنجره‌ی پیش‌نمایش
 gametrans setkey gemini                           # ثبت کلید در فایل .env
 gametrans models                                  # لیست زنده‌ی مدل‌های هر سرویس
+gametrans compare-models                          # مقایسه‌ی مدل‌های لوکال: سرعت + کیفیت فارسی
 gametrans bench                                   # اندازه‌گیری تاخیر هر مرحله
 gametrans monitors                                # فهرست مانیتورها
 gametrans run --stats                             # نمایش زنده‌ی تاخیر روی اورلی
@@ -324,6 +326,7 @@ target_fps      = 20
 | `No module named 'cv2'` | خودکار به mss سوییچ می‌شود. برای استفاده از dxcam: `pip install opencv-python-headless` |
 | ترجمه‌ها ناقص‌اند | `frames_required` را ۳ کنید |
 | «rate limited» در لاگ | کلید Groq را هم اضافه کنید تا زنجیره جابه‌جا شود |
+| «all providers rate limited» | سقف رایگان پر شده؛ موتور دوم اضافه کنید یا مدل لوکال روشن کنید |
 | «model not found» | `gametrans models` را بزنید و نام درست را در config بگذارید |
 | خطای دسترسی با کلید درست | سرویس در کشور شما در دسترس نیست — سراغ Ollama لوکال بروید |
 | `MISSING $GEMINI_API_KEY` | `gametrans setkey gemini` را بزنید |

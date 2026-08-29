@@ -1,5 +1,7 @@
 """Router behaviour: cache, failover, streaming, sanitisation, staleness."""
 
+import time
+
 import pytest
 
 from gametrans.config import ProviderConfig, TranslateConfig
@@ -171,3 +173,84 @@ def test_empty_provider_chain_is_rejected_at_construction():
 
     with pytest.raises(RuntimeError, match="No translation provider"):
         Translator(TranslateConfig(cache_path="", providers=[]))
+
+
+# -- rate-limit waiting ------------------------------------------------------
+
+
+def test_waits_for_a_slot_rather_than_dropping_the_line(monkeypatch):
+    """Hitting a free tier's per-minute limit is routine during a talkative
+    scene. Dropping the subtitle loses it; waiting a moment keeps it."""
+    import gametrans.translator as translator_module
+
+    provider = FakeProvider("only", chunks=["سلام"], rpm_limit=1)
+    translator = make_translator([provider], max_wait_for_slot_ms=2500)
+
+    assert translator.translate("First line").ok
+
+    slept = []
+    monkeypatch.setattr(translator_module.time, "sleep", lambda s: slept.append(s))
+    # The limiter still reports a long wait, so pretend the window rolled over
+    # once the translator has decided to wait.
+    original = provider.limiter.seconds_until_available
+    calls = {"n": 0}
+
+    def fake_wait():
+        calls["n"] += 1
+        return 0.2 if calls["n"] == 1 else 0.0
+
+    provider.limiter.seconds_until_available = fake_wait
+    provider.limiter.reset()
+
+    outcome = translator.translate("Second line")
+    provider.limiter.seconds_until_available = original
+
+    assert outcome.ok, outcome.error
+    assert provider.calls == 2
+
+
+def test_gives_up_when_the_wait_exceeds_the_budget():
+    provider = FakeProvider("only", chunks=["سلام"], rpm_limit=1)
+    translator = make_translator([provider], max_wait_for_slot_ms=50)
+
+    assert translator.translate("First line").ok
+    outcome = translator.translate("Second line")
+
+    assert outcome.ok is False
+    assert "rate limited" in outcome.error
+    assert "setkey groq" in outcome.error, "the error should say how to fix it"
+
+
+def test_waiting_is_skipped_when_a_provider_is_free():
+    fast = FakeProvider("fast", chunks=["سلام"])
+    translator = make_translator([fast], max_wait_for_slot_ms=5000)
+    started = time.monotonic()
+    assert translator.translate("Hello").ok
+    assert time.monotonic() - started < 0.5, "should not have waited at all"
+
+
+def test_cancellation_interrupts_the_wait():
+    provider = FakeProvider("only", chunks=["سلام"], rpm_limit=1)
+    translator = make_translator([provider], max_wait_for_slot_ms=5000)
+    translator.translate("First line")
+
+    started = time.monotonic()
+    outcome = translator.translate("Second line", is_cancelled=lambda: True)
+    assert time.monotonic() - started < 1.0
+    assert outcome.error == "cancelled"
+
+
+def test_seconds_until_available_reports_a_sane_delay():
+    from gametrans.providers.base import RateLimiter
+
+    limiter = RateLimiter(2)
+    assert limiter.seconds_until_available() == 0.0
+    limiter.record()
+    assert limiter.seconds_until_available() == 0.0
+    limiter.record()
+    delay = limiter.seconds_until_available()
+    assert 55.0 < delay <= 60.0
+
+    limiter.reset()
+    limiter.block_for(30.0)
+    assert 25.0 < limiter.seconds_until_available() <= 30.0

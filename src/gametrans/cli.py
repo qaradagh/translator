@@ -70,6 +70,24 @@ def build_parser() -> argparse.ArgumentParser:
     bench = sub.add_parser("bench", help="measure per-stage latency on the current region")
     bench.add_argument("--iterations", type=int, default=20)
 
+    compare = sub.add_parser(
+        "compare-models", help="benchmark local models for speed and Persian quality"
+    )
+    compare.add_argument(
+        "models", nargs="*", help="models to test; omit to test everything installed"
+    )
+    compare.add_argument(
+        "--base-url",
+        default="http://127.0.0.1:11434/v1",
+        help="OpenAI-compatible endpoint (default: local Ollama)",
+    )
+    compare.add_argument(
+        "--report", default="model-comparison.html", help="where to write the report"
+    )
+    compare.add_argument(
+        "--timeout", type=float, default=90.0, help="seconds per line before giving up"
+    )
+
     return parser
 
 
@@ -98,6 +116,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "setkey": lambda: _cmd_setkey(args),
         "translate": lambda: _cmd_translate(cfg, args),
         "bench": lambda: _cmd_bench(cfg, args),
+        "compare-models": lambda: _cmd_compare_models(cfg, args),
     }
     return handlers[command]()
 
@@ -459,6 +478,70 @@ def _warn_about_console_rendering(text: str, preview: bool = False) -> None:
         "renders it\n"
         "      correctly. Add --preview to see how it will really look."
     )
+
+
+def _cmd_compare_models(cfg: AppConfig, args) -> int:
+    """Time every candidate model on the same lines and write a report.
+
+    Choosing a local model from parameter counts is guesswork - what matters is
+    how it performs on this GPU, at whatever quantisation was pulled, on short
+    colloquial game text. So run it.
+    """
+    import webbrowser
+    from pathlib import Path
+
+    from .benchmark import (
+        SAMPLE_LINES,
+        benchmark_models,
+        format_console_report,
+        write_html_report,
+    )
+    from .config import ProviderConfig
+    from .providers.base import build_provider
+
+    models = list(args.models)
+    if not models:
+        print(f"Asking {args.base_url} which models are installed...")
+        try:
+            lister = build_provider(
+                ProviderConfig(
+                    name="probe", kind="openai", model="probe", base_url=args.base_url
+                )
+            )
+            models = lister.list_models()
+            lister.close()
+        except Exception as exc:
+            print(f"error: could not reach {args.base_url}", file=sys.stderr)
+            print(f"  {exc}", file=sys.stderr)
+            print("\nIs Ollama running? Start it, then:  ollama pull qwen3:8b",
+                  file=sys.stderr)
+            return 1
+
+        if not models:
+            print("No models installed. Pull one first, for example:")
+            print("  ollama pull qwen3:8b")
+            return 1
+        print(f"Found {len(models)}: {', '.join(models)}\n")
+
+    print(f"Translating {len(SAMPLE_LINES)} lines with each of {len(models)} model(s).")
+    print("First run per model includes loading it into VRAM, so it will be slow.\n")
+
+    results = benchmark_models(
+        models,
+        args.base_url,
+        target_language=cfg.translate.target_language,
+        timeout_s=args.timeout,
+    )
+
+    print(format_console_report(results))
+
+    report = write_html_report(results, Path(args.report))
+    print(f"\nReport: {report.resolve()}")
+    try:
+        webbrowser.open(report.resolve().as_uri())
+    except Exception:
+        print("Open it in a browser to compare the Persian side by side.")
+    return 0
 
 
 def _cmd_bench(cfg: AppConfig, args) -> int:

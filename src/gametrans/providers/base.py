@@ -140,6 +140,20 @@ class RateLimiter:
         with self._lock:
             self._events.append(time.monotonic())
 
+    def seconds_until_available(self) -> float:
+        """How long until this provider can be used again. 0.0 means now."""
+        now = time.monotonic()
+        with self._lock:
+            blocked_for = max(self._blocked_until - now, 0.0)
+            if self.rpm_limit <= 0:
+                return blocked_for
+            while self._events and now - self._events[0] > 60.0:
+                self._events.popleft()
+            if len(self._events) < self.rpm_limit:
+                return blocked_for
+            # The oldest request in the window has to age out first.
+            return max(blocked_for, 60.0 - (now - self._events[0]))
+
     def reset(self) -> None:
         with self._lock:
             self._events.clear()
