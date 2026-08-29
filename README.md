@@ -320,6 +320,8 @@ target_fps      = 20
 |---|---|
 | اورلی روی بازی دیده نمی‌شود | بازی را روی **Borderless Windowed** بگذارید |
 | هیچ متنی خوانده نمی‌شود | `gametrans bench` را اجرا کنید و ببینید OCR چه می‌خواند؛ `upscale` را ۳ کنید |
+| روی صفحه‌ی ۲K/۴K کند است | طبیعی است که ناحیه بزرگ باشد؛ `max_pixels` هزینه را مهار می‌کند. برای سرعت بیشتر کمش کنید |
+| `No module named 'cv2'` | خودکار به mss سوییچ می‌شود. برای استفاده از dxcam: `pip install opencv-python-headless` |
 | ترجمه‌ها ناقص‌اند | `frames_required` را ۳ کنید |
 | «rate limited» در لاگ | کلید Groq را هم اضافه کنید تا زنجیره جابه‌جا شود |
 | «model not found» | `gametrans models` را بزنید و نام درست را در config بگذارید |

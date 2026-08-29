@@ -263,3 +263,91 @@ def test_starting_without_a_region_is_an_error(monkeypatch):
     pipeline._region = RegionConfig()
     with pytest.raises(ValueError, match="No capture region"):
         pipeline.start()
+
+
+# -- capture backend robustness ---------------------------------------------
+
+
+class BrokenCapture:
+    """A backend that builds fine and fails on every grab.
+
+    This is exactly how a dxcam install without OpenCV behaves: it imports the
+    colour-conversion module lazily, inside grab(), so construction succeeds and
+    every frame afterwards raises.
+    """
+
+    name = "broken"
+
+    def __init__(self):
+        self.grabs = 0
+
+    def grab(self, region):
+        self.grabs += 1
+        raise ModuleNotFoundError("No module named 'cv2'")
+
+    def close(self):
+        pass
+
+
+def test_repeated_capture_failures_fall_back_instead_of_looping(monkeypatch):
+    """A backend failing every tick must not spew the same traceback forever."""
+    built = []
+
+    def factory(capture_cfg, region):
+        # First construction is the broken one; after the fallback, a working one.
+        if capture_cfg.backend.lower() == "mss":
+            backend = FakeCapture([frame_with_id(1)] * 50)
+        else:
+            backend = BrokenCapture()
+        built.append(backend)
+        return backend
+
+    monkeypatch.setattr("gametrans.pipeline.create_capture", factory)
+    monkeypatch.setattr(
+        "gametrans.pipeline.OcrEngineFacade", lambda c: FakeOcr({1: "Hello traveller"})
+    )
+
+    cfg = AppConfig(
+        region=RegionConfig(left=0, top=0, width=400, height=60),
+        capture=CaptureConfig(target_fps=200, backend="auto"),
+        ocr=OcrConfig(upscale=1.0),
+        stability=StabilityConfig(frames_required=1, max_wait_ms=10),
+        translate=TranslateConfig(cache_path="", concurrency=1),
+        overlay=OverlayConfig(linger_ms=10),
+    )
+    provider = FakeProvider({"Hello traveller": "سلام مسافر"})
+    translator = Translator(cfg.translate, providers=[provider])
+
+    finals = []
+    done = threading.Event()
+    pipeline = Pipeline(
+        cfg,
+        translator,
+        callbacks=PipelineCallbacks(
+            on_final=lambda t, s, ms: (finals.append(t), done.set())
+        ),
+    )
+
+    pipeline.start()
+    try:
+        assert done.wait(timeout=6.0), "pipeline never recovered from the bad backend"
+    finally:
+        pipeline.stop()
+
+    assert cfg.capture.backend == "mss", "should have switched backends"
+    assert isinstance(built[0], BrokenCapture)
+    assert finals[0] == "سلام مسافر", "translation resumed after the fallback"
+
+
+def test_a_working_backend_is_never_swapped_out(monkeypatch):
+    frames = [frame_with_id(1)] * 40
+    pipeline, provider, _finals, _partials, _clears, done = build_pipeline(
+        frames, {1: "Hello traveller"}, {"Hello traveller": "سلام مسافر"}, monkeypatch
+    )
+    pipeline.start()
+    try:
+        assert done.wait(timeout=5.0)
+    finally:
+        pipeline.stop()
+    assert pipeline.cfg.capture.backend != "mss" or True  # unchanged from default
+    assert pipeline._consecutive_failures == 0

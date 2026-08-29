@@ -27,7 +27,9 @@ tesseract = ["pytesseract>=0.3.10"]
 # Optional cloud backend that ships an official SDK
 anthropic = ["anthropic>=0.40"]
 # Faster Windows capture path
-dxcam = ["dxcam>=0.0.5"]
+# dxcam falls back to an OpenCV colour-conversion path when it cannot use
+# its native format, and imports cv2 lazily at first grab.
+dxcam = ["dxcam>=0.0.5", "opencv-python-headless>=4.8"]
 hotkeys = ["keyboard>=0.13.5"]
 dev = ["pytest>=8.0"]
 

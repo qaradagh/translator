@@ -68,7 +68,14 @@ class OcrConfig:
     backend: str = "auto"  # auto | windows | rapidocr | tesseract
     languages: List[str] = field(default_factory=lambda: ["en"])
     # Upscale small subtitle text before OCR; 2.0 helps a lot on 1080p subtitles.
+    # Capped by max_pixels below, because the point is to make small glyphs
+    # legible - on a 1440p or 4K screen they already are, and upscaling there
+    # just spends time.
     upscale: float = 2.0
+    # Ceiling on the image handed to OCR. Both the resize and the recognition
+    # scale with pixel count, so this bounds the per-frame cost regardless of
+    # how large a region the user drew or how big their display is.
+    max_pixels: int = 2_000_000
     # Drop OCR lines whose engine confidence is below this (0..1). None = keep all.
     min_confidence: float = 0.45
     # Treat the region as a single text block rather than scattered words.

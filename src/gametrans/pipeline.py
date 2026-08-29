@@ -48,6 +48,9 @@ class PipelineCallbacks:
 
 
 class Pipeline:
+    # Consecutive failing ticks before abandoning the chosen capture backend.
+    _MAX_CAPTURE_FAILURES = 5
+
     def __init__(
         self,
         cfg: AppConfig,
@@ -89,6 +92,7 @@ class Pipeline:
         self._generation_lock = threading.Lock()
         self._blank_since: Optional[float] = None
         self._had_text = False
+        self._consecutive_failures = 0
         # Set when the capture backend must be rebuilt (dxcam pins its region at
         # construction time). Initialised here so set_region() is safe to call
         # before start().
@@ -187,12 +191,30 @@ class Pipeline:
 
             try:
                 self._tick()
+                self._consecutive_failures = 0
             except RegionChanged:
                 self._rebuild_capture = True
             except Exception as exc:
-                log.exception("capture tick failed")
-                self._notify_error(str(exc))
-                time.sleep(0.25)
+                self._consecutive_failures += 1
+                # A backend that fails every tick will never recover on its own,
+                # and repeating the same traceback forever helps nobody. Drop to
+                # mss, which has no GPU or codec dependencies, and carry on.
+                if (
+                    self._consecutive_failures >= self._MAX_CAPTURE_FAILURES
+                    and self.cfg.capture.backend.lower() in ("auto", "dxcam")
+                ):
+                    log.error(
+                        "capture failed %d times in a row (%s); switching to mss",
+                        self._consecutive_failures, exc,
+                    )
+                    self._notify_error("capture backend failed; switched to mss")
+                    self.cfg.capture.backend = "mss"
+                    self._consecutive_failures = 0
+                    self._rebuild_capture = True
+                else:
+                    log.exception("capture tick failed")
+                    self._notify_error(str(exc))
+                    time.sleep(0.25)
 
             if self._rebuild_capture:
                 self._swap_capture_backend()
