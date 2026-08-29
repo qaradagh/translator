@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Iterator, List
 
 import httpx
 
@@ -118,6 +118,23 @@ class GeminiProvider(Provider):
             self._client.get(f"{self._base_url}/models/{self.cfg.model}", timeout=4.0)
         except httpx.HTTPError:
             pass
+
+    def list_models(self) -> List[str]:
+        try:
+            response = self._client.get(f"{self._base_url}/models", timeout=10.0)
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"{self.name}: {exc}") from exc
+        raise_for_status(response, self.name)
+
+        names = []
+        for model in response.json().get("models", []):
+            methods = model.get("supportedGenerationMethods") or []
+            # Only models we can actually stream a translation from.
+            if methods and "generateContent" not in methods:
+                continue
+            name = model.get("name", "")
+            names.append(name.split("/", 1)[1] if name.startswith("models/") else name)
+        return sorted(names)
 
     def close(self) -> None:
         self._client.close()

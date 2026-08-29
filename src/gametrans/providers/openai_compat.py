@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, Iterator
+from typing import Any, Dict, Iterator, List
 
 import httpx
 
@@ -105,6 +105,21 @@ class OpenAICompatProvider(Provider):
             self._client.get(f"{self._base_url}/models", timeout=4.0)
         except httpx.HTTPError:
             pass
+
+    def list_models(self) -> List[str]:
+        try:
+            response = self._client.get(f"{self._base_url}/models", timeout=10.0)
+        except httpx.HTTPError as exc:
+            raise ProviderError(f"{self.name}: {exc}") from exc
+        raise_for_status(response, self.name)
+
+        payload = response.json()
+        entries = payload.get("data") or payload.get("models") or []
+        return sorted(
+            entry.get("id") or entry.get("name", "")
+            for entry in entries
+            if isinstance(entry, dict)
+        )
 
     def close(self) -> None:
         self._client.close()

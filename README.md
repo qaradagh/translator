@@ -79,6 +79,7 @@ pip install -e ".[rapidocr]"
 |---|---|---|---|
 | **Gemini** | عالی | ۱۵ درخواست/دقیقه، حدود ۱۰۰۰–۱۵۰۰/روز | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
 | **Groq** | خوب | ۳۰ درخواست/دقیقه، ۱۴٬۴۰۰/روز | [console.groq.com/keys](https://console.groq.com/keys) |
+| **Ollama** (لوکال) | متوسط | نامحدود، آفلاین، بدون محدودیت منطقه‌ای | [ollama.com](https://ollama.com/download) |
 
 </div>
 
@@ -121,11 +122,36 @@ gametrans run            # شروع
 
 ```powershell
 gametrans translate "You must reach the castle"   # تست ترجمه بدون بازی
+gametrans models                                  # لیست زنده‌ی مدل‌های هر سرویس
 gametrans bench                                   # اندازه‌گیری تاخیر هر مرحله
 gametrans monitors                                # فهرست مانیتورها
 gametrans run --stats                             # نمایش زنده‌ی تاخیر روی اورلی
 gametrans run --show-source                       # نمایش متن اصلی زیر ترجمه
 ```
+
+<div dir="rtl">
+
+سرویس‌ها گاهی نام مدل‌ها را منسوخ می‌کنند. اگر خطای «model not found» گرفتید،
+`gametrans models` را بزنید و نام درست را از لیست زنده بردارید.
+
+### دسترسی منطقه‌ای
+
+Gemini و Groq در برخی کشورها — از جمله ایران — در دسترس نیستند و درخواست را رد می‌کنند.
+اگر `gametrans check` کلید را می‌بیند ولی `gametrans translate` خطای دسترسی می‌دهد، دلیلش همین است.
+در این حالت **مدل لوکال** کاملاً کار می‌کند و هیچ محدودیت منطقه‌ای و سقفی ندارد:
+
+</div>
+
+```powershell
+# https://ollama.com/download نصب کنید، سپس:
+ollama pull qwen3:8b
+```
+
+<div dir="rtl">
+
+و در `config.toml` سرویس `ollama-local` را `enabled = true` کنید.
+
+</div>
 
 <div dir="rtl">
 
@@ -221,6 +247,8 @@ target_fps      = 20
 | هیچ متنی خوانده نمی‌شود | `gametrans bench` را اجرا کنید و ببینید OCR چه می‌خواند؛ `upscale` را ۳ کنید |
 | ترجمه‌ها ناقص‌اند | `frames_required` را ۳ کنید |
 | «rate limited» در لاگ | کلید Groq را هم اضافه کنید تا زنجیره جابه‌جا شود |
+| «model not found» | `gametrans models` را بزنید و نام درست را در config بگذارید |
+| خطای دسترسی با کلید درست | سرویس در کشور شما در دسترس نیست — سراغ Ollama لوکال بروید |
 | کلیدهای میان‌بر کار نمی‌کنند | اگر بازی با دسترسی مدیر اجرا می‌شود، برنامه را هم Run as administrator کنید |
 | فارسی بریده‌بریده است | یعنی فونت لود نشده — پوشه‌ی `assets/fonts` باید کنار پروژه باشد |
 | مصرف CPU زیاد | `target_fps` را ۸ کنید |
@@ -231,7 +259,7 @@ target_fps      = 20
 
 ```bash
 pip install -e ".[dev]"
-pytest -q          # ۱۰۰ تست، بدون نیاز به شبکه یا صفحه‌نمایش
+pytest -q          # ۱۲۵ تست، بدون نیاز به شبکه یا صفحه‌نمایش
 ```
 
 <div dir="rtl">

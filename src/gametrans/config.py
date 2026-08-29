@@ -191,13 +191,16 @@ def default_provider_chain() -> List[ProviderConfig]:
             timeout_s=10.0,
         ),
         ProviderConfig(
-            name="groq-llama",
+            name="groq-qwen",
             kind="openai",
-            model="llama-3.3-70b-versatile",
+            model="qwen/qwen3.6-27b",
             api_key_env="GROQ_API_KEY",
             base_url="https://api.groq.com/openai/v1",
             rpm_limit=30,
             timeout_s=10.0,
+            # Qwen 3.6 has a thinking mode that is on by default. For a one-line
+            # subtitle it adds latency and buys nothing, so turn it off.
+            extra={"reasoning_effort": "none"},
         ),
         ProviderConfig(
             name="ollama-local",

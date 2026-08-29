@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("pick-region", help="select the subtitle area and save it")
     sub.add_parser("monitors", help="list monitors with their pixel geometry")
     sub.add_parser("check", help="verify OCR engines, providers and keys")
+    sub.add_parser("models", help="list the models each configured provider offers")
 
     translate = sub.add_parser("translate", help="translate one string (no screen capture)")
     translate.add_argument("text", nargs="+", help="text to translate")
@@ -80,6 +81,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "pick-region": lambda: _cmd_pick_region(cfg, args),
         "monitors": lambda: _cmd_monitors(),
         "check": lambda: _cmd_check(cfg),
+        "models": lambda: _cmd_models(cfg),
         "translate": lambda: _cmd_translate(cfg, args),
         "bench": lambda: _cmd_bench(cfg, args),
     }
@@ -205,6 +207,63 @@ def _cmd_check(cfg: AppConfig) -> int:
 
     print("\n" + ("All required components are ready." if ok else "Fix the [--] items above."))
     return 0 if ok else 1
+
+
+def _cmd_models(cfg: AppConfig) -> int:
+    """Ask each configured provider what it currently offers.
+
+    Providers retire model names on their own schedule, so this is the reliable
+    way to find a working one rather than trusting a name in a config file.
+    """
+    import os
+
+    from .providers.base import ProviderError, build_provider
+
+    any_listed = False
+    for entry in cfg.translate.providers:
+        print(f"\n{entry.name}  ({entry.kind}, configured model: {entry.model})")
+
+        if entry.api_key_env and not os.environ.get(entry.api_key_env):
+            print(f"  no key - set ${entry.api_key_env} first")
+            continue
+
+        try:
+            provider = build_provider(entry)
+        except Exception as exc:
+            print(f"  unavailable: {str(exc)[:120]}")
+            continue
+
+        try:
+            models = provider.list_models()
+        except NotImplementedError:
+            print("  this provider does not expose a model list")
+            continue
+        except ProviderError as exc:
+            print(f"  could not list models: {str(exc)[:120]}")
+            continue
+        finally:
+            provider.close()
+
+        any_listed = True
+        if not models:
+            print("  (none returned)")
+            continue
+
+        for name in models:
+            mark = " <- configured" if name == entry.model else ""
+            print(f"  {name}{mark}")
+
+        if entry.model not in models:
+            print(
+                f"\n  WARNING: '{entry.model}' is not in this list. "
+                f"Pick one above and set it as `model` for [{entry.name}] "
+                "in config.toml."
+            )
+
+    if not any_listed:
+        print("\nNo provider could be queried. Set an API key and try again.")
+        return 1
+    return 0
 
 
 def _cmd_translate(cfg: AppConfig, args) -> int:
