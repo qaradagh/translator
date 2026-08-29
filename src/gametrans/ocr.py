@@ -14,6 +14,7 @@ All three return the same `OcrResult`, so the pipeline never knows which is live
 from __future__ import annotations
 
 import logging
+import math
 import platform
 import time
 from abc import ABC, abstractmethod
@@ -60,15 +61,37 @@ class OcrResult:
 def preprocess(frame: np.ndarray, cfg: OcrConfig) -> np.ndarray:
     """Prepare a captured BGR frame for OCR.
 
-    Subtitle text is usually small and light-on-dark. Upscaling before OCR
-    reliably buys accuracy for a sub-millisecond cost at these region sizes.
+    Subtitle text is usually small and light-on-dark, and upscaling makes small
+    glyphs far easier to recognise. It is not free though - both the resize and
+    the recognition scale with pixel count - so the factor is capped so that a
+    large region on a high-resolution display does not spend 100 ms enlarging
+    text that was already perfectly legible.
     """
     img = frame
-    if cfg.upscale and cfg.upscale != 1.0:
-        img = _resize_nearest(img, cfg.upscale)
+    factor = effective_upscale(frame.shape[1], frame.shape[0], cfg)
+    if factor != 1.0:
+        img = _resize_nearest(img, factor)
     if cfg.binarize:
         img = _binarize(img, cfg.binarize_threshold)
     return img
+
+
+def effective_upscale(width: int, height: int, cfg: OcrConfig) -> float:
+    """The configured upscale, reduced to stay under the pixel ceiling."""
+    requested = cfg.upscale or 1.0
+    if requested <= 1.0:
+        return 1.0
+
+    if not cfg.max_pixels:
+        return requested  # ceiling disabled
+
+    pixels = max(width * height, 1)
+    if pixels >= cfg.max_pixels:
+        # Already at or over the ceiling - enlarging would only cost time.
+        return 1.0
+
+    allowed = math.sqrt(cfg.max_pixels / pixels)
+    return max(1.0, min(requested, allowed))
 
 
 def _resize_nearest(img: np.ndarray, factor: float) -> np.ndarray:

@@ -48,6 +48,9 @@ class PipelineCallbacks:
 
 
 class Pipeline:
+    # Consecutive failing ticks before abandoning the chosen capture backend.
+    _MAX_CAPTURE_FAILURES = 5
+
     def __init__(
         self,
         cfg: AppConfig,
@@ -66,6 +69,11 @@ class Pipeline:
             pixel_threshold=cfg.capture.pixel_threshold,
             hash_width=cfg.capture.hash_width,
             hash_height=cfg.capture.hash_height,
+            text_mask=cfg.capture.text_mask,
+            mask_pixel_threshold=cfg.capture.mask_pixel_threshold,
+            mask_blur=cfg.capture.mask_blur,
+            mask_edge=cfg.capture.mask_edge,
+            mask_bright=cfg.capture.mask_bright,
         )
         self._stability = StabilityTracker(cfg.stability)
 
@@ -84,6 +92,7 @@ class Pipeline:
         self._generation_lock = threading.Lock()
         self._blank_since: Optional[float] = None
         self._had_text = False
+        self._consecutive_failures = 0
         # Set when the capture backend must be rebuilt (dxcam pins its region at
         # construction time). Initialised here so set_region() is safe to call
         # before start().
@@ -182,12 +191,30 @@ class Pipeline:
 
             try:
                 self._tick()
+                self._consecutive_failures = 0
             except RegionChanged:
                 self._rebuild_capture = True
             except Exception as exc:
-                log.exception("capture tick failed")
-                self._notify_error(str(exc))
-                time.sleep(0.25)
+                self._consecutive_failures += 1
+                # A backend that fails every tick will never recover on its own,
+                # and repeating the same traceback forever helps nobody. Drop to
+                # mss, which has no GPU or codec dependencies, and carry on.
+                if (
+                    self._consecutive_failures >= self._MAX_CAPTURE_FAILURES
+                    and self.cfg.capture.backend.lower() in ("auto", "dxcam")
+                ):
+                    log.error(
+                        "capture failed %d times in a row (%s); switching to mss",
+                        self._consecutive_failures, exc,
+                    )
+                    self._notify_error("capture backend failed; switched to mss")
+                    self.cfg.capture.backend = "mss"
+                    self._consecutive_failures = 0
+                    self._rebuild_capture = True
+                else:
+                    log.exception("capture tick failed")
+                    self._notify_error(str(exc))
+                    time.sleep(0.25)
 
             if self._rebuild_capture:
                 self._swap_capture_backend()
@@ -219,7 +246,13 @@ class Pipeline:
             return
         self.metrics.increment("frames_processed")
 
-        if is_probably_blank(frame):
+        if is_probably_blank(
+            frame,
+            text_mask=self.cfg.capture.text_mask,
+            blur=self.cfg.capture.mask_blur,
+            edge_threshold=self.cfg.capture.mask_edge,
+            bright_threshold=self.cfg.capture.mask_bright,
+        ):
             self._handle_blank()
             return
 

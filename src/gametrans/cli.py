@@ -477,6 +477,11 @@ def _cmd_bench(cfg: AppConfig, args) -> int:
     detector = ChangeDetector(
         hash_threshold=cfg.capture.hash_threshold,
         pixel_threshold=cfg.capture.pixel_threshold,
+        text_mask=cfg.capture.text_mask,
+        mask_pixel_threshold=cfg.capture.mask_pixel_threshold,
+        mask_blur=cfg.capture.mask_blur,
+        mask_edge=cfg.capture.mask_edge,
+        mask_bright=cfg.capture.mask_bright,
     )
 
     print(f"benchmarking {args.iterations} frames on region {cfg.region.as_tuple()}\n")

@@ -49,6 +49,18 @@ class CaptureConfig:
     # Downscale used for change detection only (not for OCR).
     hash_width: int = 64
     hash_height: int = 16
+    # Compare a text signature rather than the raw picture. Without this, any
+    # region containing moving scenery looks different every frame and the gate
+    # saves nothing - which is most games, since subtitles are usually drawn
+    # straight over the scene rather than onto an opaque bar.
+    text_mask: bool = True
+    mask_pixel_threshold: float = 0.03
+    mask_blur: int = 9
+    # A pixel counts as text when it differs from its neighbourhood by more than
+    # mask_edge AND is brighter than mask_bright. Lower mask_bright for dim or
+    # coloured subtitles; raise it if bright scenery is tripping the gate.
+    mask_edge: float = 26.0
+    mask_bright: float = 170.0
 
 
 @dataclass
@@ -56,7 +68,14 @@ class OcrConfig:
     backend: str = "auto"  # auto | windows | rapidocr | tesseract
     languages: List[str] = field(default_factory=lambda: ["en"])
     # Upscale small subtitle text before OCR; 2.0 helps a lot on 1080p subtitles.
+    # Capped by max_pixels below, because the point is to make small glyphs
+    # legible - on a 1440p or 4K screen they already are, and upscaling there
+    # just spends time.
     upscale: float = 2.0
+    # Ceiling on the image handed to OCR. Both the resize and the recognition
+    # scale with pixel count, so this bounds the per-frame cost regardless of
+    # how large a region the user drew or how big their display is.
+    max_pixels: int = 2_000_000
     # Drop OCR lines whose engine confidence is below this (0..1). None = keep all.
     min_confidence: float = 0.45
     # Treat the region as a single text block rather than scattered words.

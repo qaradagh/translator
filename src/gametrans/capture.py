@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import platform
+import time
 from abc import ABC, abstractmethod
 from typing import Optional
 
@@ -92,7 +93,23 @@ class DXCamBackend(CaptureBackend):
             region.left + region.width,
             region.top + region.height,
         )
-        self._camera = dxcam.create(output_idx=max(region.monitor - 1, 0), region=box)
+        output_idx = max(region.monitor - 1, 0)
+
+        # dxcam converts colour through OpenCV unless the requested format is
+        # already the native one, and it imports cv2 lazily - inside grab(), not
+        # create() - so a missing OpenCV surfaces as a crash on the first frame
+        # rather than at construction. Asking for BGRA keeps it on its numpy
+        # path and drops the dependency entirely.
+        self._drop_alpha = True
+        try:
+            self._camera = dxcam.create(
+                output_idx=output_idx, region=box, output_color="BGRA"
+            )
+        except Exception:
+            self._camera = None
+        if self._camera is None:
+            self._drop_alpha = False
+            self._camera = dxcam.create(output_idx=output_idx, region=box)
         if self._camera is None:
             raise RuntimeError("dxcam.create() returned None")
 
@@ -106,7 +123,10 @@ class DXCamBackend(CaptureBackend):
             # grab. That is itself a "no change" signal - the caller treats it as
             # a skip, which is exactly what the change gate would have decided.
             return None
-        # dxcam yields RGB; the rest of the pipeline expects BGR ordering.
+        if self._drop_alpha:
+            # BGRA -> BGR, which is what the rest of the pipeline expects.
+            return frame[:, :, :3]
+        # Otherwise dxcam yields RGB and the channels need reversing.
         return frame[:, :, ::-1]
 
     def close(self) -> None:
@@ -124,23 +144,50 @@ class RegionChanged(Exception):
         self.region = region
 
 
+def _verify(backend: CaptureBackend, region: RegionConfig, attempts: int = 8) -> None:
+    """Prove a backend can actually deliver a frame before we commit to it.
+
+    Constructing successfully is not evidence of anything: dxcam imports part of
+    its pipeline lazily, so a broken install builds fine and then fails on every
+    single grab. Auto-detection has to try the thing it is detecting.
+
+    A `None` frame means "desktop unchanged", which is legitimate, so retry a
+    few times before giving up on a genuinely idle screen.
+    """
+    for _ in range(attempts):
+        frame = backend.grab(region)
+        if frame is not None:
+            if frame.ndim != 3 or frame.shape[2] < 3:
+                raise RuntimeError(f"unexpected frame shape {frame.shape}")
+            return
+        time.sleep(0.02)
+    # Never produced a frame, but never raised either - an idle desktop looks
+    # exactly like this, so accept it rather than rejecting a working backend.
+
+
 def create_capture(cfg: CaptureConfig, region: RegionConfig) -> CaptureBackend:
-    """Pick the fastest capture backend available on this machine."""
+    """Pick the fastest capture backend that actually works on this machine."""
     requested = (cfg.backend or "auto").lower()
 
     if requested == "mss":
         return MSSBackend()
     if requested == "dxcam":
-        return DXCamBackend(region)
+        backend = DXCamBackend(region)
+        _verify(backend, region)
+        return backend
 
     # auto
     if platform.system() == "Windows":
+        backend = None
         try:
             backend = DXCamBackend(region)
+            _verify(backend, region)
             log.info("capture backend: dxcam")
             return backend
         except Exception as exc:
-            log.info("dxcam unavailable (%s); falling back to mss", exc)
+            if backend is not None:
+                backend.close()
+            log.info("dxcam unusable (%s); falling back to mss", exc)
 
     log.info("capture backend: mss")
     return MSSBackend()
