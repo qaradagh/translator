@@ -49,6 +49,18 @@ class CaptureConfig:
     # Downscale used for change detection only (not for OCR).
     hash_width: int = 64
     hash_height: int = 16
+    # Compare a text signature rather than the raw picture. Without this, any
+    # region containing moving scenery looks different every frame and the gate
+    # saves nothing - which is most games, since subtitles are usually drawn
+    # straight over the scene rather than onto an opaque bar.
+    text_mask: bool = True
+    mask_pixel_threshold: float = 0.03
+    mask_blur: int = 9
+    # A pixel counts as text when it differs from its neighbourhood by more than
+    # mask_edge AND is brighter than mask_bright. Lower mask_bright for dim or
+    # coloured subtitles; raise it if bright scenery is tripping the gate.
+    mask_edge: float = 26.0
+    mask_bright: float = 170.0
 
 
 @dataclass

@@ -66,6 +66,11 @@ class Pipeline:
             pixel_threshold=cfg.capture.pixel_threshold,
             hash_width=cfg.capture.hash_width,
             hash_height=cfg.capture.hash_height,
+            text_mask=cfg.capture.text_mask,
+            mask_pixel_threshold=cfg.capture.mask_pixel_threshold,
+            mask_blur=cfg.capture.mask_blur,
+            mask_edge=cfg.capture.mask_edge,
+            mask_bright=cfg.capture.mask_bright,
         )
         self._stability = StabilityTracker(cfg.stability)
 
@@ -219,7 +224,13 @@ class Pipeline:
             return
         self.metrics.increment("frames_processed")
 
-        if is_probably_blank(frame):
+        if is_probably_blank(
+            frame,
+            text_mask=self.cfg.capture.text_mask,
+            blur=self.cfg.capture.mask_blur,
+            edge_threshold=self.cfg.capture.mask_edge,
+            bright_threshold=self.cfg.capture.mask_bright,
+        ):
             self._handle_blank()
             return
 

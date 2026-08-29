@@ -76,13 +76,16 @@ class FakeProvider(Provider):
 def frame_with_id(marker, shape=(60, 400, 3)):
     """A subtitle-like frame carrying an identifying marker.
 
-    The bar width varies with the marker so that two different markers also look
-    structurally different - otherwise the change gate would (correctly) treat
-    the second one as the same frame and skip it.
+    Glyph-shaped strokes rather than one solid block: the change gate keys on
+    text-like detail - a sharp local edge that is also bright - so a filled
+    rectangle barely registers, exactly as a solid HUD panel should not. The
+    stroke layout varies with the marker so two markers look genuinely
+    different, otherwise the gate would correctly skip the second one.
     """
     frame = np.full(shape, 20, dtype=np.uint8)
-    bar_width = 100 + (marker % 5) * 50
-    frame[10:50, 20 : 20 + bar_width] = 235
+    positions = np.random.default_rng(marker).integers(25, shape[1] - 25, 18)
+    for x in positions:
+        frame[16:44, x : x + 6] = 240
     frame[0, 0, 0] = marker  # read back by FakeOcr
     return frame
 

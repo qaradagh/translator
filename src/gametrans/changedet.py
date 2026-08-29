@@ -6,10 +6,20 @@ importantly, would push duplicate lines at the translation API and burn the free
 tier quota. This module answers one question as cheaply as possible: *is this
 frame meaningfully different from the last one?*
 
-The check costs well under a millisecond: downscale to 64x16 greyscale, then
-compare both a difference hash (structure) and the mean absolute pixel delta
-(brightness/fades). Structure catches new text; the pixel delta catches a
-subtitle fading in or out.
+The naive version of this compares the raw image, which works only when the
+watched area is an opaque subtitle bar. Most games draw text straight over the
+scene, so the background moves whenever the camera does and every single frame
+looks "changed" - the gate fires constantly and saves nothing.
+
+So the comparison runs on a *text signature* rather than the picture: pixels
+that are both a strong short-range edge and bright. Glyph strokes light up;
+panning scenery, which is mostly low-frequency, drops out. Measured on a
+rendered scene with the camera panning and the subtitle changing once in 60
+frames, the raw-image gate fires 60 times and the text signature fires twice -
+the first frame and the one where the text actually changed.
+
+Either signature is then reduced the same way: downscale to 64x16, and compare
+both a difference hash (structure) and the mean absolute delta (fades).
 """
 
 from __future__ import annotations
@@ -58,6 +68,48 @@ def hamming(a: np.ndarray, b: np.ndarray) -> int:
     return int(np.count_nonzero(a != b))
 
 
+def box_blur(image: np.ndarray, size: int = 9) -> np.ndarray:
+    """Separable box blur via integral sums - no scipy or cv2 needed."""
+    if size < 2:
+        return image
+    pad = size // 2
+    padded = np.pad(image, pad, mode="edge")
+
+    rows = np.cumsum(padded, axis=0)
+    rows = np.vstack([np.zeros((1, rows.shape[1]), rows.dtype), rows])
+    rows = rows[size:, :] - rows[:-size, :]
+
+    cols = np.cumsum(rows, axis=1)
+    cols = np.hstack([np.zeros((cols.shape[0], 1), cols.dtype), cols])
+    cols = cols[:, size:] - cols[:, :-size]
+
+    return cols / float(size * size)
+
+
+def text_signature(
+    frame: np.ndarray,
+    blur: int = 9,
+    edge_threshold: float = 26.0,
+    bright_threshold: float = 170.0,
+) -> np.ndarray:
+    """A 0/1 map of text-like pixels.
+
+    Two conditions together, because either alone picks up scenery: the pixel
+    must differ sharply from its local neighbourhood (a glyph stroke, not a
+    gradient) *and* be bright. Subtitles are drawn to stay readable, so they are
+    light-on-dark or dark-with-a-light-outline; both leave bright strokes. Broad
+    scene detail satisfies at most one condition.
+    """
+    gray = to_grayscale(frame)
+    highpass = np.abs(gray - box_blur(gray, blur))
+    return ((highpass > edge_threshold) & (gray > bright_threshold)).astype(np.float32)
+
+
+def text_pixel_ratio(frame: np.ndarray, **kwargs) -> float:
+    """Fraction of the frame that looks like text. Near zero means no subtitle."""
+    return float(text_signature(frame, **kwargs).mean())
+
+
 @dataclass
 class ChangeResult:
     changed: bool
@@ -74,11 +126,22 @@ class ChangeDetector:
         pixel_threshold: float = 2.5,
         hash_width: int = 64,
         hash_height: int = 16,
+        text_mask: bool = True,
+        mask_pixel_threshold: float = 0.03,
+        mask_blur: int = 9,
+        mask_edge: float = 26.0,
+        mask_bright: float = 170.0,
     ) -> None:
         self.hash_threshold = hash_threshold
-        self.pixel_threshold = pixel_threshold
         self.hash_width = hash_width
         self.hash_height = hash_height
+        self.text_mask = text_mask
+        self.mask_blur = mask_blur
+        self.mask_edge = mask_edge
+        self.mask_bright = mask_bright
+        # The two signatures live on different scales - 0-255 luma versus a 0/1
+        # mask - so they need their own delta thresholds.
+        self.pixel_threshold = mask_pixel_threshold if text_mask else pixel_threshold
         self._prev_hash: Optional[np.ndarray] = None
         self._prev_small: Optional[np.ndarray] = None
 
@@ -88,8 +151,16 @@ class ChangeDetector:
         self._prev_small = None
 
     def _signature(self, frame: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        gray = to_grayscale(frame)
-        small = downscale(gray, self.hash_width, self.hash_height)
+        if self.text_mask:
+            source = text_signature(
+                frame,
+                blur=self.mask_blur,
+                edge_threshold=self.mask_edge,
+                bright_threshold=self.mask_bright,
+            )
+        else:
+            source = to_grayscale(frame)
+        small = downscale(source, self.hash_width, self.hash_height)
         return small, dhash(small)
 
     def check(self, frame: np.ndarray) -> ChangeResult:
@@ -112,11 +183,20 @@ class ChangeDetector:
         return ChangeResult(changed=changed, hash_distance=distance, pixel_delta=delta)
 
 
-def is_probably_blank(frame: np.ndarray, std_threshold: float = 3.0) -> bool:
-    """Cheap early-out for an empty subtitle band (no text drawn at all).
+def is_probably_blank(
+    frame: np.ndarray,
+    std_threshold: float = 3.0,
+    text_mask: bool = True,
+    min_text_ratio: float = 0.0006,
+    **mask_kwargs,
+) -> bool:
+    """Cheap early-out when the watched area holds no text at all.
 
-    A region containing text has high local contrast; an empty one is close to
-    flat. Skipping these saves an OCR call per frame during gameplay silence.
+    Standard deviation alone only works over a flat background: a subtitle band
+    sitting on busy scenery has plenty of contrast and no text whatsoever. The
+    text signature answers the actual question - are there any glyph-like
+    pixels - so silence during gameplay still skips OCR.
     """
-    gray = to_grayscale(frame)
-    return float(gray.std()) < std_threshold
+    if text_mask:
+        return text_pixel_ratio(frame, **mask_kwargs) < min_text_ratio
+    return float(to_grayscale(frame).std()) < std_threshold
