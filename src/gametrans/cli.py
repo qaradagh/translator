@@ -88,6 +88,19 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument(
         "--timeout", type=float, default=90.0, help="seconds per line before giving up"
     )
+    use = sub.add_parser(
+        "use-model", help="switch the local translator to a model and enable it"
+    )
+    use.add_argument("model", help="e.g. aya-expanse:8b")
+    use.add_argument(
+        "--provider", default="ollama-local", help="which provider entry to change"
+    )
+    use.add_argument(
+        "--only",
+        action="store_true",
+        help="also disable every other provider, for local-only use",
+    )
+
     compare.add_argument(
         "--label",
         default="",
@@ -125,6 +138,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "translate": lambda: _cmd_translate(cfg, args),
         "bench": lambda: _cmd_bench(cfg, args),
         "compare-models": lambda: _cmd_compare_models(cfg, args),
+        "use-model": lambda: _cmd_use_model(cfg, args),
     }
     return handlers[command]()
 
@@ -588,6 +602,41 @@ def _warn_about_console_rendering(text: str, preview: bool = False) -> None:
         "renders it\n"
         "      correctly. Add --preview to see how it will really look."
     )
+
+
+def _cmd_use_model(cfg: AppConfig, args) -> int:
+    """Point the local provider at a model and turn it on.
+
+    The closing step after compare-models: a provider lives in an
+    array-of-tables, which is the fiddliest part of the config to edit by hand
+    and the last thing someone should have to do after choosing a model.
+    """
+    from .config import list_provider_names, update_provider
+
+    names = list_provider_names(args.config)
+    if not names:
+        print(f"error: no providers found in {args.config}", file=sys.stderr)
+        print("Copy config.example.toml to config.toml first.", file=sys.stderr)
+        return 1
+
+    if args.provider not in names:
+        print(f"error: no provider called {args.provider!r}", file=sys.stderr)
+        print(f"Available: {', '.join(names)}", file=sys.stderr)
+        return 1
+
+    update_provider(args.config, args.provider, {"model": args.model, "enabled": True})
+    print(f"{args.provider} now uses {args.model}, and is enabled.")
+
+    if args.only:
+        disabled = [n for n in names if n != args.provider]
+        for name in disabled:
+            update_provider(args.config, name, {"enabled": False})
+        if disabled:
+            print(f"Disabled: {', '.join(disabled)}")
+
+    print("\nCheck it with:  gametrans check")
+    print('Try it with:    gametrans translate --preview "It\'s a trap!"')
+    return 0
 
 
 def _cmd_compare_models(cfg: AppConfig, args) -> int:

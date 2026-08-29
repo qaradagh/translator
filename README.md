@@ -209,6 +209,7 @@ gametrans setkey gemini                           # ثبت کلید در فای�
 gametrans settings                                # اندازه، رنگ، محل و ماندگاری متن
 gametrans models                                  # لیست زنده‌ی مدل‌های هر سرویس
 gametrans compare-models                          # مقایسه‌ی مدل‌های لوکال: سرعت + کیفیت فارسی
+gametrans use-model aya-expanse:8b --only         # انتخاب مدل برنده و خاموش کردن بقیه
 gametrans bench                                   # اندازه‌گیری تاخیر هر مرحله
 gametrans monitors                                # فهرست مانیتورها
 gametrans run --stats                             # نمایش زنده‌ی تاخیر روی اورلی
