@@ -120,6 +120,9 @@ class ProviderConfig:
     # Provider-specific request fields merged into the request body verbatim.
     # e.g. {"reasoning_effort": "none"} on Groq reasoning models.
     extra: Dict[str, Any] = field(default_factory=dict)
+    # Send a much shorter system prompt. Worth it for models running locally,
+    # which re-read it on every request and pay for it in wall-clock time.
+    compact_prompt: bool = False
 
 
 @dataclass
@@ -235,24 +238,36 @@ def default_provider_chain() -> List[ProviderConfig]:
         ),
         ProviderConfig(
             name="ollama-local",
-            kind="openai",
-            # Aya Expanse is trained for multilingual work and measured best of
-            # the 8B-class models on Persian game dialogue: correct grammar and
-            # real Persian vocabulary, where others invented words or reached
-            # for Arabic ones. Run `gametrans compare-models` to check on your
-            # own hardware - the answer depends on the GPU and the quantisation.
+            # The native API rather than the OpenAI-compatible shim: the shim
+            # hides num_ctx, num_thread and think, which are what decide how
+            # fast a local model answers.
+            kind="ollama",
+            # Aya Expanse measured best of the 8B-class models on Persian game
+            # dialogue - correct grammar and real Persian vocabulary, where
+            # others invented words or reached for Arabic ones. On a machine
+            # without a supported GPU, try a 4B model instead: inference speed
+            # tracks model size closely on CPU. `gametrans compare-models`
+            # settles it on your own hardware.
             model="aya-expanse:8b",
             api_key_env="",
-            base_url="http://127.0.0.1:11434/v1",
+            base_url="http://127.0.0.1:11434",
             rpm_limit=0,
-            timeout_s=30.0,
+            timeout_s=60.0,
+            # A local model re-reads the system prompt every request, and on CPU
+            # that is real wall-clock time.
+            compact_prompt=True,
             extra={
                 # Ollama unloads an idle model after a few minutes. Mid-game
-                # that means the next subtitle waits out a full reload, so keep
-                # it resident for a realistic play session.
+                # that means the next subtitle waits out a full reload.
                 "keep_alive": "30m",
-                # Silences the thinking mode on models that have one.
-                "reasoning_effort": "none",
+                "options": {
+                    # A subtitle needs a fraction of the default window, and the
+                    # context size drives how much memory each token touches.
+                    "num_ctx": 2048,
+                    # Bound a model that starts rambling, so it cannot stall the
+                    # line behind it.
+                    "num_predict": 256,
+                },
             },
             enabled=False,
         ),
