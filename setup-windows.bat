@@ -39,17 +39,14 @@ echo.
 echo ============================================================
 echo  Setup complete.
 echo.
-echo  Next, add a free API key. Easiest way:
-echo      gametrans setkey gemini
+echo  From now on you do not need to type anything.
 echo.
-echo  Get the key here first:
-echo      https://aistudio.google.com/apikey
+echo  Just double-click this file in the gametrans folder:
 echo.
-echo  ^(Or open the .env file in this folder and paste it after
-echo   GEMINI_API_KEY= yourself.^)
+echo      START-HERE.bat
 echo.
-echo  Then run:
-echo      run.bat
+echo  It opens a menu: add your API key, pick the subtitle
+echo  area, and start translating.
 echo ============================================================
 echo.
 pause
