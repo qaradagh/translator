@@ -48,6 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("pick-region", help="select the subtitle area and save it")
     sub.add_parser("monitors", help="list monitors with their pixel geometry")
+    sub.add_parser("settings", help="change how the Persian text looks")
     sub.add_parser("check", help="verify OCR engines, providers and keys")
     sub.add_parser("models", help="list the models each configured provider offers")
 
@@ -69,6 +70,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     bench = sub.add_parser("bench", help="measure per-stage latency on the current region")
     bench.add_argument("--iterations", type=int, default=20)
+
+    compare = sub.add_parser(
+        "compare-models", help="benchmark local models for speed and Persian quality"
+    )
+    compare.add_argument(
+        "models", nargs="*", help="models to test; omit to test everything installed"
+    )
+    compare.add_argument(
+        "--base-url",
+        default="http://127.0.0.1:11434/v1",
+        help="OpenAI-compatible endpoint (default: local Ollama)",
+    )
+    compare.add_argument(
+        "--report", default="model-comparison.html", help="where to write the report"
+    )
+    compare.add_argument(
+        "--timeout", type=float, default=90.0, help="seconds per line before giving up"
+    )
 
     return parser
 
@@ -93,11 +112,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         "run": lambda: _cmd_run(cfg, args),
         "pick-region": lambda: _cmd_pick_region(cfg, args),
         "monitors": lambda: _cmd_monitors(),
+        "settings": lambda: _cmd_settings(cfg, args),
         "check": lambda: _cmd_check(cfg),
         "models": lambda: _cmd_models(cfg),
         "setkey": lambda: _cmd_setkey(args),
         "translate": lambda: _cmd_translate(cfg, args),
         "bench": lambda: _cmd_bench(cfg, args),
+        "compare-models": lambda: _cmd_compare_models(cfg, args),
     }
     return handlers[command]()
 
@@ -157,6 +178,108 @@ def _cmd_monitors() -> int:
             f"{label:<14} left={monitor['left']:<6} top={monitor['top']:<6} "
             f"width={monitor['width']:<6} height={monitor['height']}"
         )
+    return 0
+
+
+_COLOURS = [
+    ("white", "#FFFFFF"),
+    ("soft yellow (easiest to read over most games)", "#FFE082"),
+    ("light cyan", "#A5E9FF"),
+    ("light green", "#B9F6A5"),
+    ("orange", "#FFAB70"),
+]
+
+_POSITIONS = [
+    ("just below the captured area", "region"),
+    ("bottom of the screen", "bottom"),
+    ("top of the screen", "top"),
+]
+
+
+def _ask(prompt: str, default):
+    """Prompt with a default; empty input keeps it."""
+    answer = input(f"{prompt} [{default}]: ").strip()
+    return answer or str(default)
+
+
+def _ask_int(prompt: str, default: int, low: int, high: int) -> int:
+    while True:
+        raw = _ask(prompt, default)
+        try:
+            value = int(float(raw))
+        except ValueError:
+            print(f"  needs a number between {low} and {high}")
+            continue
+        if low <= value <= high:
+            return value
+        print(f"  needs to be between {low} and {high}")
+
+
+def _cmd_settings(cfg: AppConfig, args) -> int:
+    """Edit how the overlay looks, without hand-editing TOML."""
+    from .config import update_section
+
+    overlay = cfg.overlay
+    print("\nHow the Persian text is shown. Press Enter to keep a value.\n")
+
+    values = {}
+
+    values["font_size"] = _ask_int("Text size", overlay.font_size, 8, 96)
+
+    print("\nText colour:")
+    for index, (label, code) in enumerate(_COLOURS, start=1):
+        marker = "  <- current" if code.lower() == overlay.text_color.lower() else ""
+        print(f"  {index}) {label}{marker}")
+    print(f"  {len(_COLOURS) + 1}) something else (hex, e.g. #FF66CC)")
+    choice = _ask("Choose", 1)
+    if choice.isdigit() and 1 <= int(choice) <= len(_COLOURS):
+        values["text_color"] = _COLOURS[int(choice) - 1][1]
+    elif choice.isdigit():
+        custom = _ask("Hex colour", overlay.text_color)
+        values["text_color"] = custom if custom.startswith("#") else f"#{custom}"
+    else:
+        values["text_color"] = overlay.text_color
+
+    values["background_opacity"] = (
+        _ask_int(
+            "\nBackground darkness behind the text, 0-100",
+            int(overlay.background_opacity * 100),
+            0,
+            100,
+        )
+        / 100.0
+    )
+
+    print("\nHow many recent lines to keep on screen.")
+    print("  More lines means you can still read the previous one when dialogue moves on.")
+    values["history_lines"] = _ask_int("Lines", overlay.history_lines, 1, 8)
+
+    print("\nHow long each line stays before it fades, in seconds.")
+    seconds = _ask("Seconds", round(overlay.linger_ms / 1000.0, 1))
+    try:
+        values["linger_ms"] = max(300, int(float(seconds) * 1000))
+    except ValueError:
+        values["linger_ms"] = overlay.linger_ms
+
+    print("\nWhere it appears:")
+    for index, (label, _key) in enumerate(_POSITIONS, start=1):
+        print(f"  {index}) {label}")
+    position = _ask("Choose", 1)
+    if position.isdigit() and 1 <= int(position) <= len(_POSITIONS):
+        values["anchor"] = _POSITIONS[int(position) - 1][1]
+
+    show_source = _ask("\nAlso show the original English? (y/n)",
+                       "y" if overlay.show_source else "n")
+    values["show_source"] = show_source.lower().startswith("y")
+
+    update_section(args.config, "overlay", values)
+
+    print(f"\nSaved to {args.config}")
+    print(f"  size {values['font_size']}  ·  colour {values['text_color']}  ·  "
+          f"{values['history_lines']} line(s)  ·  "
+          f"{values['linger_ms'] / 1000:.1f}s each")
+    print("\nSee it without starting a game:")
+    print('  gametrans translate --preview "You must reach the castle"')
     return 0
 
 
@@ -459,6 +582,70 @@ def _warn_about_console_rendering(text: str, preview: bool = False) -> None:
         "renders it\n"
         "      correctly. Add --preview to see how it will really look."
     )
+
+
+def _cmd_compare_models(cfg: AppConfig, args) -> int:
+    """Time every candidate model on the same lines and write a report.
+
+    Choosing a local model from parameter counts is guesswork - what matters is
+    how it performs on this GPU, at whatever quantisation was pulled, on short
+    colloquial game text. So run it.
+    """
+    import webbrowser
+    from pathlib import Path
+
+    from .benchmark import (
+        SAMPLE_LINES,
+        benchmark_models,
+        format_console_report,
+        write_html_report,
+    )
+    from .config import ProviderConfig
+    from .providers.base import build_provider
+
+    models = list(args.models)
+    if not models:
+        print(f"Asking {args.base_url} which models are installed...")
+        try:
+            lister = build_provider(
+                ProviderConfig(
+                    name="probe", kind="openai", model="probe", base_url=args.base_url
+                )
+            )
+            models = lister.list_models()
+            lister.close()
+        except Exception as exc:
+            print(f"error: could not reach {args.base_url}", file=sys.stderr)
+            print(f"  {exc}", file=sys.stderr)
+            print("\nIs Ollama running? Start it, then:  ollama pull qwen3:8b",
+                  file=sys.stderr)
+            return 1
+
+        if not models:
+            print("No models installed. Pull one first, for example:")
+            print("  ollama pull qwen3:8b")
+            return 1
+        print(f"Found {len(models)}: {', '.join(models)}\n")
+
+    print(f"Translating {len(SAMPLE_LINES)} lines with each of {len(models)} model(s).")
+    print("First run per model includes loading it into VRAM, so it will be slow.\n")
+
+    results = benchmark_models(
+        models,
+        args.base_url,
+        target_language=cfg.translate.target_language,
+        timeout_s=args.timeout,
+    )
+
+    print(format_console_report(results))
+
+    report = write_html_report(results, Path(args.report))
+    print(f"\nReport: {report.resolve()}")
+    try:
+        webbrowser.open(report.resolve().as_uri())
+    except Exception:
+        print("Open it in a browser to compare the Persian side by side.")
+    return 0
 
 
 def _cmd_bench(cfg: AppConfig, args) -> int:

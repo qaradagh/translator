@@ -182,3 +182,111 @@ def test_save_region_replaces_the_block_and_keeps_the_rest():
     assert cfg.overlay.font_size == 40    # untouched
     assert "# my notes" in body           # comments preserved
     assert body.count("[region]") == 1    # not duplicated
+
+
+# -- writing settings back ---------------------------------------------------
+
+
+def test_update_section_preserves_comments_and_other_keys():
+    from gametrans.config import update_section
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write(
+            tmp,
+            """
+# my personal notes
+log_level = "INFO"
+
+[overlay]
+# how big the Persian text is
+font_size = 26
+text_color = "#FFFFFF"
+# linger_ms = 1400
+
+[capture]
+target_fps = 12
+""",
+        )
+        update_section(path, "overlay", {"font_size": 34, "text_color": "#FFE082"})
+        body = open(path, encoding="utf-8").read()
+        cfg = load_config(path)
+
+    assert cfg.overlay.font_size == 34
+    assert cfg.overlay.text_color == "#FFE082"
+    assert cfg.capture.target_fps == 12        # other sections untouched
+    assert "# my personal notes" in body       # comments kept
+    assert "# how big the Persian text is" in body
+    assert "# linger_ms = 1400" in body        # commented lines left alone
+    assert body.count("font_size") == 1        # not duplicated
+
+
+def test_update_section_adds_missing_keys_inside_the_section():
+    from gametrans.config import update_section
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write(tmp, "[overlay]\nfont_size = 26\n\n[capture]\ntarget_fps = 12\n")
+        update_section(path, "overlay", {"history_lines": 4})
+        cfg = load_config(path)
+
+    assert cfg.overlay.history_lines == 4
+    assert cfg.overlay.font_size == 26
+    assert cfg.capture.target_fps == 12
+
+
+def test_update_section_creates_a_missing_section():
+    from gametrans.config import update_section
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write(tmp, "[capture]\ntarget_fps = 12\n")
+        update_section(path, "overlay", {"font_size": 30})
+        cfg = load_config(path)
+
+    assert cfg.overlay.font_size == 30
+    assert cfg.capture.target_fps == 12
+
+
+def test_update_section_creates_a_missing_file():
+    from gametrans.config import update_section
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "config.toml")
+        update_section(path, "overlay", {"font_size": 30, "show_source": True})
+        cfg = load_config(path)
+
+    assert cfg.overlay.font_size == 30
+    assert cfg.overlay.show_source is True
+
+
+def test_update_section_writes_types_toml_can_read_back():
+    from gametrans.config import update_section
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write(tmp, "[overlay]\n")
+        update_section(
+            path,
+            "overlay",
+            {
+                "font_size": 30,
+                "background_opacity": 0.7,
+                "show_source": True,
+                "show_latency": False,
+                "text_color": "#FFE082",
+            },
+        )
+        cfg = load_config(path)
+
+    assert cfg.overlay.background_opacity == 0.7
+    assert cfg.overlay.show_source is True
+    assert cfg.overlay.show_latency is False
+    assert cfg.overlay.text_color == "#FFE082"
+
+
+def test_update_section_escapes_quotes_in_values():
+    from gametrans.config import update_section
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = write(tmp, "[translate]\n")
+        update_section(path, "translate", {"context_hint": 'a "quoted" game'})
+        cfg = load_config(path)
+
+    assert cfg.translate.context_hint == 'a "quoted" game'

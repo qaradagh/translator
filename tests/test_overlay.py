@@ -166,7 +166,10 @@ def _render_overlay(text, width=860, height=90, **cfg_kwargs):
 
     overlay = SubtitleOverlay(cfg, RegionConfig(left=0, top=0, width=width, height=44))
     overlay.resize(width, height)
-    overlay._translation = text
+    # Call the slot directly: the public API goes through a Qt signal, which
+    # needs a running event loop to be delivered.
+    if text:
+        overlay._on_text_changed(text, "", False)
 
     image = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
     image.fill(Qt.transparent)
@@ -233,3 +236,136 @@ def test_overlay_wraps_long_text_inside_the_widget(qt_app, font):
 def test_overlay_draws_nothing_when_there_is_no_translation(qt_app, font):
     image, _natural_width, _cfg = _render_overlay("")
     assert _ink_bounds(image)[2] == 0
+
+
+# -- history: several lines on screen at once --------------------------------
+
+
+def _overlay(qt_app, **cfg_kwargs):
+    from gametrans.config import OverlayConfig, RegionConfig
+    from gametrans.overlay import SubtitleOverlay
+
+    options = dict(font_size=24, background_opacity=0.0, outline_width=0.0, padding=10)
+    options.update(cfg_kwargs)
+    overlay = SubtitleOverlay(OverlayConfig(**options), RegionConfig(width=800, height=44))
+    overlay.resize(800, 300)
+    return overlay
+
+
+def test_recent_lines_are_kept_so_fast_dialogue_stays_readable(qt_app, font):
+    """Game dialogue often moves faster than a second language can be read."""
+    overlay = _overlay(qt_app, history_lines=3)
+    for line in ("خط اول", "خط دوم", "خط سوم"):
+        overlay._on_text_changed(line, "", False)
+
+    texts = [entry.translation for entry in overlay._lines]
+    assert texts == ["خط اول", "خط دوم", "خط سوم"]
+
+
+def test_history_is_bounded_and_drops_the_oldest(qt_app, font):
+    overlay = _overlay(qt_app, history_lines=2)
+    for line in ("یک", "دو", "سه"):
+        overlay._on_text_changed(line, "", False)
+
+    assert [e.translation for e in overlay._lines] == ["دو", "سه"]
+
+
+def test_history_of_one_behaves_like_a_single_subtitle(qt_app, font):
+    overlay = _overlay(qt_app, history_lines=1)
+    overlay._on_text_changed("اول", "", False)
+    overlay._on_text_changed("دوم", "", False)
+    assert [e.translation for e in overlay._lines] == ["دوم"]
+
+
+def test_a_streaming_line_updates_in_place_instead_of_stacking(qt_app, font):
+    """Partial chunks are one line arriving, not three separate lines."""
+    overlay = _overlay(qt_app, history_lines=3)
+    overlay._on_text_changed("سلام", "", True)
+    overlay._on_text_changed("سلام مسافر", "", True)
+    overlay._on_text_changed("سلام مسافر عزیز", "", False)
+
+    assert len(overlay._lines) == 1
+    assert overlay._lines[0].translation == "سلام مسافر عزیز"
+    assert overlay._lines[0].partial is False
+
+
+def test_a_finished_line_is_followed_by_a_new_entry(qt_app, font):
+    overlay = _overlay(qt_app, history_lines=3)
+    overlay._on_text_changed("اول", "", False)
+    overlay._on_text_changed("دو", "", True)
+    assert len(overlay._lines) == 2
+
+
+def test_lines_fade_rather_than_vanishing(qt_app, font):
+    from gametrans.overlay import SubtitleLine
+
+    line = SubtitleLine("سلام", "", partial=False)
+    line.settled_at = line.born - 1.0  # one second old
+
+    assert line.opacity(linger_ms=2000, fade_ms=500) == 1.0      # still fresh
+    assert 0.0 < line.opacity(linger_ms=800, fade_ms=500) < 1.0  # mid-fade
+    assert line.opacity(linger_ms=100, fade_ms=200) == 0.0       # gone
+
+
+def test_a_streaming_line_never_fades(qt_app, font):
+    from gametrans.overlay import SubtitleLine
+
+    line = SubtitleLine("سلام", "", partial=True)
+    assert line.opacity(linger_ms=1, fade_ms=1) == 1.0
+    assert line.expired(linger_ms=1, fade_ms=1) is False
+
+
+def test_expired_lines_are_dropped_on_tick(qt_app, font):
+    overlay = _overlay(qt_app, history_lines=3, linger_ms=1, fade_ms=1)
+    overlay._on_text_changed("قدیمی", "", False)
+    overlay._lines[0].settled_at = overlay._lines[0].born - 10.0
+
+    overlay._on_tick()
+    assert len(overlay._lines) == 0
+
+
+def test_older_lines_are_dimmed_so_the_newest_reads_as_current(qt_app, font):
+    overlay = _overlay(qt_app, history_lines=3, history_dim=0.5, linger_ms=10_000)
+    overlay._on_text_changed("قدیمی", "", False)
+    overlay._on_text_changed("جدید", "", False)
+
+    opacities = [block[3] for block in overlay._visible_blocks()]
+    assert opacities[-1] == 1.0, "the newest line stays at full strength"
+    assert opacities[0] < opacities[-1], "older lines are dimmer"
+
+
+def test_clearing_lets_the_current_line_finish_instead_of_snapping_away(qt_app, font):
+    overlay = _overlay(qt_app, history_lines=3, linger_ms=5000)
+    overlay._on_text_changed("در حال نوشتن", "", True)
+    overlay._on_cleared()
+
+    assert len(overlay._lines) == 1
+    assert overlay._lines[0].partial is False, "it should settle, not disappear"
+
+
+def test_stacked_lines_all_get_drawn(qt_app, font):
+    """The whole point: more than one line's worth of ink on the canvas."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage
+
+    def ink(overlay):
+        image = QImage(800, 300, QImage.Format_ARGB32_Premultiplied)
+        image.fill(Qt.transparent)
+        overlay.render(image)
+        return sum(
+            1
+            for y in range(image.height())
+            for x in range(0, image.width(), 3)
+            if image.pixelColor(x, y).alpha() > 40
+        )
+
+    one = _overlay(qt_app, history_lines=3, linger_ms=10_000)
+    one._on_text_changed("خط اول است", "", False)
+    single = ink(one)
+
+    three = _overlay(qt_app, history_lines=3, linger_ms=10_000)
+    for line in ("خط اول است", "خط دوم است", "خط سوم است"):
+        three._on_text_changed(line, "", False)
+    stacked = ink(three)
+
+    assert stacked > single * 1.5, f"expected a taller stack ({single} -> {stacked})"

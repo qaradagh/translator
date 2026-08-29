@@ -38,8 +38,9 @@ echo     4  -  START TRANSLATING
 echo.
 echo     5  -  Test one translation (shows the real overlay)
 echo     6  -  Show which AI models are available
+echo     9  -  Compare local models (speed + Persian quality)
 echo     7  -  Update to the newest version
-echo     8  -  Open the settings file
+echo     8  -  Change how the Persian text looks
 echo.
 echo     0  -  Exit
 echo.
@@ -54,6 +55,7 @@ if "%choice%"=="5" goto testone
 if "%choice%"=="6" goto models
 if "%choice%"=="7" goto update
 if "%choice%"=="8" goto settings
+if "%choice%"=="9" goto compare
 if "%choice%"=="0" exit /b 0
 goto menu
 
@@ -128,6 +130,21 @@ echo.
 pause
 goto menu
 
+:compare
+cls
+echo.
+echo   This translates the same game lines with every local model you have
+echo   installed, then opens a report so you can compare them side by side.
+echo.
+echo   Ollama must be running. The first line per model is slow because the
+echo   model has to load into memory.
+echo.
+pause
+python -m gametrans compare-models
+echo.
+pause
+goto menu
+
 :models
 cls
 echo.
@@ -178,8 +195,7 @@ exit /b 0
 :settings
 cls
 echo.
-echo   Opening the settings file in Notepad.
-echo   Save and close it when you are finished.
+python -m gametrans settings
 echo.
-notepad config.toml
+pause
 goto menu
