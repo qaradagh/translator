@@ -340,3 +340,143 @@ def test_list_models_on_an_unreachable_host_is_a_provider_error(monkeypatch):
             provider.list_models()
     finally:
         provider.close()
+
+
+# -- Google's two key formats ------------------------------------------------
+
+
+class AuthProbeHandler(BaseHTTPRequestHandler):
+    """Accepts exactly one auth header, records what each request carried."""
+
+    def log_message(self, *args):
+        pass
+
+    def _handle(self):
+        AUTH_SCRIPT["seen"].append(
+            {
+                "x-goog-api-key": self.headers.get("x-goog-api-key"),
+                "authorization": self.headers.get("authorization"),
+            }
+        )
+        accepted = AUTH_SCRIPT["accepts"]
+        supplied = (
+            "bearer" if self.headers.get("authorization") else "api-key"
+        )
+
+        if supplied != accepted:
+            body = b'{"error":"invalid authentication credential"}'
+            self.send_response(401)
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if self.command == "GET":
+            body = json.dumps(
+                {"models": [{"name": "models/gemini-2.5-flash-lite",
+                             "supportedGenerationMethods": ["generateContent"]}]}
+            ).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        self.send_response(200)
+        self.send_header("content-type", "text/event-stream")
+        self.end_headers()
+        payload = {"candidates": [{"content": {"parts": [{"text": "سلام"}]}}]}
+        self.wfile.write(b"data: " + json.dumps(payload).encode() + b"\n\n")
+
+    do_POST = _handle
+    do_GET = _handle
+
+
+AUTH_SCRIPT = {"accepts": "api-key", "seen": []}
+
+
+@pytest.fixture
+def auth_server():
+    httpd = HTTPServer(("127.0.0.1", 0), AuthProbeHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    AUTH_SCRIPT["seen"] = []
+    yield f"http://127.0.0.1:{httpd.server_port}"
+    httpd.shutdown()
+
+
+def test_standard_key_uses_the_documented_header(auth_server, monkeypatch):
+    AUTH_SCRIPT["accepts"] = "api-key"
+    provider = gemini_provider(auth_server, monkeypatch)
+    try:
+        assert list(provider.stream(REQUEST)) == ["سلام"]
+    finally:
+        provider.close()
+
+    assert len(AUTH_SCRIPT["seen"]) == 1, "no retry should be needed"
+    assert AUTH_SCRIPT["seen"][0]["x-goog-api-key"] == "fake-key"
+    assert AUTH_SCRIPT["seen"][0]["authorization"] is None
+
+
+def test_auth_key_rejected_as_header_falls_back_to_bearer(auth_server, monkeypatch):
+    """The newer AQ. keys are rejected on some paths unless sent as a bearer
+    token; the provider must recover instead of failing the translation."""
+    AUTH_SCRIPT["accepts"] = "bearer"
+    provider = gemini_provider(auth_server, monkeypatch)
+    try:
+        assert list(provider.stream(REQUEST)) == ["سلام"]
+    finally:
+        provider.close()
+
+    assert len(AUTH_SCRIPT["seen"]) == 2, "expected one retry"
+    assert AUTH_SCRIPT["seen"][0]["x-goog-api-key"] == "fake-key"
+    assert AUTH_SCRIPT["seen"][1]["authorization"] == "Bearer fake-key"
+
+
+def test_the_two_auth_headers_are_never_sent_together(auth_server, monkeypatch):
+    """The API rejects a request carrying both as an ambiguous credential."""
+    AUTH_SCRIPT["accepts"] = "bearer"
+    provider = gemini_provider(auth_server, monkeypatch)
+    try:
+        list(provider.stream(REQUEST))
+    finally:
+        provider.close()
+
+    for attempt in AUTH_SCRIPT["seen"]:
+        assert not (attempt["x-goog-api-key"] and attempt["authorization"])
+
+
+def test_working_auth_mode_is_remembered_for_later_requests(auth_server, monkeypatch):
+    AUTH_SCRIPT["accepts"] = "bearer"
+    provider = gemini_provider(auth_server, monkeypatch)
+    try:
+        list(provider.stream(REQUEST))
+        AUTH_SCRIPT["seen"] = []
+        list(provider.stream(REQUEST))
+    finally:
+        provider.close()
+
+    assert len(AUTH_SCRIPT["seen"]) == 1, "second call must not retry"
+    assert AUTH_SCRIPT["seen"][0]["authorization"] == "Bearer fake-key"
+
+
+def test_a_genuinely_bad_key_still_raises_after_both_modes(auth_server, monkeypatch):
+    AUTH_SCRIPT["accepts"] = "neither"
+    provider = gemini_provider(auth_server, monkeypatch)
+    try:
+        with pytest.raises(AuthError):
+            list(provider.stream(REQUEST))
+    finally:
+        provider.close()
+
+    assert len(AUTH_SCRIPT["seen"]) == 2, "both modes should be attempted once"
+
+
+def test_list_models_also_falls_back(auth_server, monkeypatch):
+    AUTH_SCRIPT["accepts"] = "bearer"
+    provider = gemini_provider(auth_server, monkeypatch)
+    try:
+        assert provider.list_models() == ["gemini-2.5-flash-lite"]
+    finally:
+        provider.close()
+    assert len(AUTH_SCRIPT["seen"]) == 2
