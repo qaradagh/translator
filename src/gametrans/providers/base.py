@@ -157,6 +157,15 @@ class Provider(ABC):
         """Open the connection early so the first real request skips the
         TLS handshake - worth 80-150 ms on the very first subtitle."""
 
+    def list_models(self) -> List[str]:
+        """Model IDs this provider currently offers.
+
+        Providers retire models on their own schedule, so a hard-coded name in a
+        config file goes stale without warning. `gametrans models` calls this so
+        the correct name can always be discovered from the service itself.
+        """
+        raise NotImplementedError(f"{self.name}: listing models is not supported")
+
     def close(self) -> None:  # pragma: no cover - trivial
         pass
 

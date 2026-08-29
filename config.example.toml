@@ -100,13 +100,16 @@ timeout_s   = 10.0
 # ۲) Groq — سریع‌ترین، و سقف روزانه‌اش ۲۰ برابر Gemini است
 #    کلید رایگان: https://console.groq.com/keys
 [[translate.providers]]
-name        = "groq-llama"
+name        = "groq-qwen"
 kind        = "openai"
-model       = "llama-3.3-70b-versatile"
+model       = "qwen/qwen3.6-27b"
 api_key_env = "GROQ_API_KEY"
 base_url    = "https://api.groq.com/openai/v1"
 rpm_limit   = 30
 timeout_s   = 10.0
+# Qwen 3.6 حالت «فکر کردن» دارد که پیش‌فرض روشن است و فقط تاخیر اضافه می‌کند.
+extra       = { reasoning_effort = "none" }
+# نام مدل‌ها گاهی منسوخ می‌شوند — با `gametrans models` لیست زنده را ببینید.
 
 # ۳) مدل لوکال — کاملاً آفلاین و بدون سقف. برای فعال کردن enabled = true
 [[translate.providers]]

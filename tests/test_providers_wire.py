@@ -259,3 +259,84 @@ def test_missing_api_key_is_reported_at_construction(monkeypatch):
                 name="gemini-test", kind="gemini", model="m", api_key_env="ABSENT_KEY"
             )
         )
+
+
+# -- live model listing ------------------------------------------------------
+
+
+class ModelsHandler(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        body = json.dumps(SCRIPT["models_body"]).encode()
+        self.send_response(SCRIPT.get("models_status", 200))
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+@pytest.fixture(scope="module")
+def models_server():
+    httpd = HTTPServer(("127.0.0.1", 0), ModelsHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{httpd.server_port}"
+    httpd.shutdown()
+
+
+def test_openai_list_models_returns_sorted_ids(models_server, monkeypatch):
+    SCRIPT["models_status"] = 200
+    SCRIPT["models_body"] = {
+        "data": [
+            {"id": "qwen/qwen3.6-27b"},
+            {"id": "openai/gpt-oss-120b"},
+        ]
+    }
+    provider = openai_provider(models_server, monkeypatch)
+    try:
+        assert provider.list_models() == ["openai/gpt-oss-120b", "qwen/qwen3.6-27b"]
+    finally:
+        provider.close()
+
+
+def test_gemini_list_models_strips_the_models_prefix(models_server, monkeypatch):
+    SCRIPT["models_status"] = 200
+    SCRIPT["models_body"] = {
+        "models": [
+            {
+                "name": "models/gemini-2.5-flash-lite",
+                "supportedGenerationMethods": ["generateContent"],
+            },
+            {
+                "name": "models/text-embedding-004",
+                "supportedGenerationMethods": ["embedContent"],
+            },
+        ]
+    }
+    provider = gemini_provider(models_server, monkeypatch)
+    try:
+        # The embedding model cannot generate text, so it must be filtered out.
+        assert provider.list_models() == ["gemini-2.5-flash-lite"]
+    finally:
+        provider.close()
+
+
+def test_list_models_maps_errors_like_any_other_call(models_server, monkeypatch):
+    SCRIPT["models_status"] = 401
+    SCRIPT["models_body"] = {"error": "bad key"}
+    provider = openai_provider(models_server, monkeypatch)
+    try:
+        with pytest.raises(AuthError):
+            provider.list_models()
+    finally:
+        provider.close()
+
+
+def test_list_models_on_an_unreachable_host_is_a_provider_error(monkeypatch):
+    provider = openai_provider("http://127.0.0.1:1", monkeypatch)
+    try:
+        with pytest.raises(ProviderError):
+            provider.list_models()
+    finally:
+        provider.close()

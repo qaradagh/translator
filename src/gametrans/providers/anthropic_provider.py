@@ -15,7 +15,7 @@ one-line subtitle it would add hundreds of milliseconds for no quality gain.
 from __future__ import annotations
 
 import logging
-from typing import Iterator
+from typing import Iterator, List
 
 from ..config import ProviderConfig
 from .base import (
@@ -85,6 +85,14 @@ class AnthropicProvider(Provider):
         except anthropic.APIStatusError as exc:
             raise ProviderError(f"{self.name}: HTTP {exc.status_code} - {exc}") from exc
         except anthropic.APIConnectionError as exc:
+            raise ProviderError(f"{self.name}: connection failed - {exc}") from exc
+
+    def list_models(self) -> List[str]:
+        try:
+            return sorted(model.id for model in self._client.models.list())
+        except self._anthropic.APIStatusError as exc:
+            raise ProviderError(f"{self.name}: HTTP {exc.status_code} - {exc}") from exc
+        except self._anthropic.APIConnectionError as exc:
             raise ProviderError(f"{self.name}: connection failed - {exc}") from exc
 
     def close(self) -> None:
