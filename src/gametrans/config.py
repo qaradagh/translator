@@ -133,11 +133,17 @@ class TranslateConfig:
     providers: List[ProviderConfig] = field(default_factory=list)
     # Stream partial output to the overlay as it arrives.
     stream: bool = True
-    # How many translations may be in flight at once. >1 stops a slow line from
-    # blocking the next one.
-    concurrency: int = 3
-    # Drop a translation whose source line is already off-screen.
-    stale_after_ms: int = 6000
+    # How many lines may be translated at once, and equivalently how many wait
+    # in the queue. One is right for a local model: sending several requests at
+    # a CPU-bound backend makes each of them slower, so they all arrive late
+    # instead of one arriving on time. Raise it only for a hosted provider that
+    # genuinely handles requests in parallel.
+    concurrency: int = 1
+    # A queued line older than this is skipped rather than translated. It does
+    # not cancel a translation already running - a late translation is worth
+    # much more than an abandoned one, and the overlay keeps recent lines up so
+    # a late one still lands somewhere the player can read it.
+    stale_after_ms: int = 15000
     # When every provider is rate limited, wait up to this long for a slot
     # rather than dropping the line. Free tiers are slow enough that a talkative
     # scene will hit the limit routinely; a subtitle a second late still helps.
@@ -252,7 +258,8 @@ def default_provider_chain() -> List[ProviderConfig]:
             api_key_env="",
             base_url="http://127.0.0.1:11434",
             rpm_limit=0,
-            timeout_s=60.0,
+            # A hung request should not hold the queue for a minute.
+            timeout_s=25.0,
             # A local model re-reads the system prompt every request, and on CPU
             # that is real wall-clock time.
             compact_prompt=True,

@@ -20,9 +20,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from collections import deque
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Callable, Deque, List, Optional
 
 from .capture import CaptureBackend, RegionChanged, create_capture
 from .changedet import ChangeDetector, is_probably_blank
@@ -81,15 +81,16 @@ class Pipeline:
         self._ocr: Optional[OcrEngineFacade] = None
 
         self._thread: Optional[threading.Thread] = None
-        self._pool: Optional[ThreadPoolExecutor] = None
         self._running = threading.Event()
         self._paused = threading.Event()
         self._region_lock = threading.Lock()
 
-        # Monotonically increasing id for the line currently on screen. A
-        # translation whose generation is stale is dropped rather than drawn.
-        self._generation = 0
-        self._generation_lock = threading.Lock()
+        # Newest-first work queue. Bounded, so a slow translator can never
+        # accumulate a backlog of lines that have already left the screen.
+        self._pending: Deque[str] = deque(maxlen=max(cfg.translate.concurrency, 1))
+        self._pending_lock = threading.Lock()
+        self._pending_ready = threading.Event()
+        self._workers: List[threading.Thread] = []
         self._blank_since: Optional[float] = None
         self._had_text = False
         self._consecutive_failures = 0
@@ -111,10 +112,18 @@ class Pipeline:
 
         self._running.set()
         self._paused.clear()
-        self._pool = ThreadPoolExecutor(
-            max_workers=max(self.cfg.translate.concurrency, 1),
-            thread_name_prefix="translate",
-        )
+        self._pending.clear()
+        self._pending_ready.clear()
+
+        self._workers = [
+            threading.Thread(
+                target=self._translate_worker, name=f"translate-{index}", daemon=True
+            )
+            for index in range(max(self.cfg.translate.concurrency, 1))
+        ]
+        for worker in self._workers:
+            worker.start()
+
         self._thread = threading.Thread(target=self._run, name="capture", daemon=True)
         self._thread.start()
         log.info("pipeline started on region %s", self._region.as_tuple())
@@ -124,13 +133,16 @@ class Pipeline:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
-        if self._pool is not None:
-            self._pool.shutdown(wait=False, cancel_futures=True)
-            self._pool = None
+        self._pending_ready.set()  # wake the workers so they can exit
+        for worker in self._workers:
+            worker.join(timeout=2.0)
+        self._workers = []
         self._teardown_devices()
 
     def pause(self) -> None:
         self._paused.set()
+        with self._pending_lock:
+            self._pending.clear()
         self._notify_status("paused")
 
     def resume(self) -> None:
@@ -295,40 +307,64 @@ class Pipeline:
     # -- translation ---------------------------------------------------------
 
     def _submit(self, text: str) -> None:
-        if self._pool is None:
-            return
-        with self._generation_lock:
-            self._generation += 1
-            generation = self._generation
+        """Queue a line for translation, keeping only the newest few.
+
+        The queue is bounded and drops the *oldest* waiting line when it
+        overflows. A translator slower than the dialogue would otherwise build
+        a backlog and spend all its time on lines that left the screen minutes
+        ago; keeping the newest means it is always working on something the
+        player can still see.
+        """
         self._had_text = True
-        try:
-            self._pool.submit(self._translate_job, text, generation)
-        except RuntimeError:
-            # Pool already shutting down.
-            pass
+        with self._pending_lock:
+            dropped = len(self._pending) == self._pending.maxlen
+            self._pending.append(text)
+        if dropped:
+            self.metrics.increment("skipped_backlog")
+        self._pending_ready.set()
 
-    def _translate_job(self, text: str, generation: int) -> None:
-        submitted_at = time.monotonic()
+    def _translate_worker(self) -> None:
+        """Translate queued lines one at a time, to completion."""
+        while self._running.is_set():
+            if not self._pending_ready.wait(timeout=0.2):
+                continue
 
-        def is_stale() -> bool:
-            with self._generation_lock:
-                superseded = generation != self._generation
-            expired = (
-                (time.monotonic() - submitted_at) * 1000.0
-                > self.cfg.translate.stale_after_ms
-            )
-            return superseded or expired or not self._running.is_set()
+            with self._pending_lock:
+                item = self._pending.popleft() if self._pending else None
+                if not self._pending:
+                    self._pending_ready.clear()
+
+            if item is None or not self._running.is_set():
+                continue
+            self._translate_one(item)
+
+    def _translate_one(self, text: str) -> None:
+        """Run one translation through to the end.
+
+        Deliberately not cancelled when a newer subtitle arrives. Cancelling on
+        every new line meant that whenever the model was slower than the
+        dialogue - which is the normal case for a local model on a CPU - every
+        translation was killed just before it finished, and the player saw one
+        line translated followed by a long run of nothing. A slightly late
+        translation is worth far more than an abandoned one, and the overlay
+        keeps recent lines on screen precisely so a late one still lands
+        somewhere useful.
+        """
+        def is_cancelled() -> bool:
+            # Only shutdown and pause stop a translation now.
+            return not self._running.is_set() or self._paused.is_set()
 
         def on_chunk(accumulated: str, _chunk: str) -> None:
-            if is_stale():
+            if is_cancelled():
                 return
             if self.callbacks.on_partial:
                 self.callbacks.on_partial(accumulated, text)
 
-        outcome = self.translator.translate(text, on_chunk=on_chunk, is_cancelled=is_stale)
+        outcome = self.translator.translate(
+            text, on_chunk=on_chunk, is_cancelled=is_cancelled
+        )
 
-        if is_stale():
-            self.metrics.increment("dropped_stale")
+        if is_cancelled():
             return
 
         if outcome.ok:

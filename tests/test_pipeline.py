@@ -351,3 +351,116 @@ def test_a_working_backend_is_never_swapped_out(monkeypatch):
         pipeline.stop()
     assert pipeline.cfg.capture.backend != "mss" or True  # unchanged from default
     assert pipeline._consecutive_failures == 0
+
+
+# -- a translator slower than the dialogue -----------------------------------
+
+
+class SlowProvider(FakeProvider):
+    """A local model on a CPU: seconds per line, one at a time."""
+
+    def __init__(self, mapping, delay=0.25):
+        super().__init__(mapping)
+        self.delay = delay
+        self.started = []
+        self.finished = []
+
+    def stream(self, request):
+        self.started.append(request.text)
+        time.sleep(self.delay)
+        self.seen.append(request.text)
+        yield self.mapping.get(request.text, "ترجمه")
+        self.finished.append(request.text)
+
+
+def test_a_translation_is_never_abandoned_when_a_new_line_arrives(monkeypatch):
+    """The bug that made this unusable: every new subtitle cancelled the
+    translation still running, so with a model slower than the dialogue almost
+    nothing ever finished."""
+    frames = []
+    script = {}
+    translations = {}
+    for marker in range(1, 6):
+        frames += [frame_with_id(marker)] * 3
+        script[marker] = f"Line {marker}"
+        translations[f"Line {marker}"] = f"خط {marker}"
+
+    capture = FakeCapture(frames)
+    monkeypatch.setattr("gametrans.pipeline.create_capture", lambda c, r: capture)
+    monkeypatch.setattr("gametrans.pipeline.OcrEngineFacade", lambda c: FakeOcr(script))
+
+    cfg = AppConfig(
+        region=RegionConfig(left=0, top=0, width=400, height=60),
+        capture=CaptureConfig(target_fps=60),
+        ocr=OcrConfig(upscale=1.0),
+        stability=StabilityConfig(frames_required=1, max_wait_ms=10),
+        translate=TranslateConfig(cache_path="", concurrency=1),
+        overlay=OverlayConfig(linger_ms=10),
+    )
+    provider = SlowProvider(translations, delay=0.25)
+    translator = Translator(cfg.translate, providers=[provider])
+
+    finals = []
+    pipeline = Pipeline(
+        cfg,
+        translator,
+        callbacks=PipelineCallbacks(on_final=lambda t, s, ms: finals.append(t)),
+    )
+
+    pipeline.start()
+    try:
+        assert wait_for(lambda: len(finals) >= 2, timeout=8.0), f"got {finals}"
+        time.sleep(0.4)
+    finally:
+        pipeline.stop()
+
+    # Every translation that was started also completed and was displayed.
+    assert len(provider.finished) == len(provider.started), (
+        f"{len(provider.started) - len(provider.finished)} translations were abandoned"
+    )
+    assert len(finals) == len(provider.finished)
+    assert finals, "nothing reached the overlay at all"
+
+
+def test_the_queue_keeps_the_newest_line_not_the_oldest(monkeypatch):
+    """A backlog of lines that already left the screen is worthless; when the
+    queue overflows the oldest waiting line is the one to drop."""
+    cfg = AppConfig(
+        region=RegionConfig(left=0, top=0, width=400, height=60),
+        translate=TranslateConfig(cache_path="", concurrency=1),
+    )
+    translator = Translator(cfg.translate, providers=[FakeProvider({})])
+    pipeline = Pipeline(cfg, translator)
+
+    for line in ("first", "second", "third"):
+        pipeline._submit(line)
+
+    assert list(pipeline._pending) == ["third"], "only the newest should be waiting"
+    assert pipeline.metrics.counter("skipped_backlog") == 2
+
+
+def test_a_larger_queue_keeps_that_many_of_the_newest(monkeypatch):
+    cfg = AppConfig(
+        region=RegionConfig(left=0, top=0, width=400, height=60),
+        translate=TranslateConfig(cache_path="", concurrency=3),
+    )
+    translator = Translator(cfg.translate, providers=[FakeProvider({})])
+    pipeline = Pipeline(cfg, translator)
+
+    for line in ("a", "b", "c", "d", "e"):
+        pipeline._submit(line)
+
+    assert list(pipeline._pending) == ["c", "d", "e"]
+
+
+def test_pausing_clears_the_queue(monkeypatch):
+    cfg = AppConfig(
+        region=RegionConfig(left=0, top=0, width=400, height=60),
+        translate=TranslateConfig(cache_path="", concurrency=2),
+    )
+    translator = Translator(cfg.translate, providers=[FakeProvider({})])
+    pipeline = Pipeline(cfg, translator)
+
+    pipeline._submit("something")
+    pipeline.pause()
+    assert list(pipeline._pending) == [], "paused should not resume into a stale backlog"
