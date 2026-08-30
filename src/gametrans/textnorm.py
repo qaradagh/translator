@@ -156,7 +156,9 @@ def sanitize_translation(text: str, persian: bool = True) -> str:
     if not text:
         return ""
 
-    text = text.strip()
+    text = strip_reasoning(text)
+    if not text:
+        return ""
 
     # Fenced code block.
     if text.startswith("```"):
@@ -198,3 +200,54 @@ def contains_persian(text: str) -> bool:
     forever. Any Arabic-script read is rejected before it reaches the API.
     """
     return bool(_PERSIAN_RANGE_RE.search(text))
+
+
+
+# -- reasoning leakage -------------------------------------------------------
+
+_THINK_BLOCK_RE = re.compile(
+    r"<(think|thinking|reasoning)>.*?</\1>", re.DOTALL | re.IGNORECASE
+)
+_UNCLOSED_THINK_RE = re.compile(r"<(think|thinking|reasoning)>.*", re.DOTALL | re.IGNORECASE)
+
+
+def strip_reasoning(text: str) -> str:
+    """Remove a reasoning model's thoughts from its answer.
+
+    Models that think are supposed to be switched off for this job, but the
+    switch is not honoured everywhere - and a model that ignores it emits its
+    entire chain of thought where the translation should be. On screen during a
+    game that is a wall of English over the subtitle.
+    """
+    if not text:
+        return ""
+    text = _THINK_BLOCK_RE.sub("", text)
+    # An unterminated block means the answer never arrived at all.
+    text = _UNCLOSED_THINK_RE.sub("", text)
+    return text.strip()
+
+
+def persian_ratio(text: str) -> float:
+    """Fraction of the letters in `text` that are Arabic-script."""
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return 0.0
+    persian = sum(1 for ch in letters if _PERSIAN_RANGE_RE.match(ch))
+    return persian / len(letters)
+
+
+def looks_like_persian(text: str, minimum_ratio: float = 0.5) -> bool:
+    """Whether a supposed Persian translation actually is one.
+
+    The last line of defence against a model that answers in the wrong language
+    - reasoning out loud, refusing, or apologising in English. Latin proper
+    nouns and key names are expected inside a Persian line, so this asks
+    whether Persian dominates, not whether it is the only thing present.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if not any(ch.isalpha() for ch in stripped):
+        # Digits and punctuation only - "500", "E" - which is a fine answer.
+        return True
+    return persian_ratio(stripped) >= minimum_ratio

@@ -28,7 +28,7 @@ from .providers.base import (
     TranslationRequest,
     build_provider,
 )
-from .textnorm import sanitize_translation
+from .textnorm import looks_like_persian, sanitize_translation
 
 log = logging.getLogger(__name__)
 
@@ -206,6 +206,19 @@ class Translator:
                 # An empty answer means the model judged the input to be noise.
                 log.debug("%s returned empty output for %r", provider.name, text[:60])
                 last_error = "empty response"
+                continue
+
+            # A model that answers in the wrong language has not translated
+            # anything - it is reasoning out loud, refusing, or apologising.
+            # Putting that on screen mid-game is worse than showing nothing, so
+            # treat it as a failed provider and try the next one.
+            if self.targets_persian() and not looks_like_persian(cleaned):
+                log.warning(
+                    "%s answered in the wrong language (%r...); failing over",
+                    provider.name, cleaned[:60],
+                )
+                self.metrics.increment("wrong_language")
+                last_error = f"{provider.name} did not answer in the target language"
                 continue
 
             outcome.text = cleaned

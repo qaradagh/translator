@@ -66,10 +66,17 @@ class OllamaProvider(Provider):
         }
         options.update(extra.pop("options", {}) or {})
 
+        system_prompt = build_system_prompt(request)
+        if _wants_no_think_token(self.cfg.model):
+            # Some builds ignore the `think` flag below and answer with their
+            # entire chain of thought. Qwen also honours this literal token,
+            # which those builds do respect.
+            system_prompt += "\n/no_think"
+
         payload: Dict[str, Any] = {
             "model": self.cfg.model,
             "messages": [
-                {"role": "system", "content": build_system_prompt(request)},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": request.text},
             ],
             "stream": True,
@@ -149,3 +156,8 @@ class OllamaProvider(Provider):
 
     def close(self) -> None:
         self._client.close()
+
+
+def _wants_no_think_token(model: str) -> bool:
+    """Whether this model family recognises the literal `/no_think` token."""
+    return "qwen" in (model or "").lower()
